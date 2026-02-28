@@ -1,0 +1,8 @@
+name: plan-checker
+display_name: GSD Plan Checker
+description: "Pre-execution validation across 7 dimensions: requirement coverage, task completeness, dependencies, key links, scope, must-haves, and context compliance."
+capabilities:
+  - plan-validation
+  - requirement-tracing
+  - dependency-verification
+  - scope-analysis

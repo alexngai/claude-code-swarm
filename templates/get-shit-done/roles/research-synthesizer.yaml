@@ -1,0 +1,7 @@
+name: research-synthesizer
+display_name: GSD Research Synthesizer
+description: "Integrates 4 parallel researcher outputs into cohesive SUMMARY.md for roadmapper consumption. Resolves conflicts between research findings."
+capabilities:
+  - research-synthesis
+  - conflict-resolution
+  - summary-generation

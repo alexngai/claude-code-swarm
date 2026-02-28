@@ -1,0 +1,8 @@
+name: project-researcher
+display_name: GSD Project Researcher
+description: "Domain ecosystem research for new projects. Produces 5 outputs: SUMMARY.md, STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md."
+capabilities:
+  - domain-research
+  - ecosystem-analysis
+  - technology-evaluation
+  - risk-identification

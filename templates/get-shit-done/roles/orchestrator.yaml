@@ -1,0 +1,9 @@
+name: orchestrator
+display_name: GSD Orchestrator
+description: "Command-level orchestrator. Routes user commands to agent chains, manages project state, spawns agents in dependency-aware waves, handles checkpoint resumption."
+capabilities:
+  - command-routing
+  - wave-orchestration
+  - state-management
+  - checkpoint-handling
+  - context-budgeting

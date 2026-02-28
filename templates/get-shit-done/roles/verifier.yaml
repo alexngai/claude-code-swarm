@@ -1,0 +1,8 @@
+name: verifier
+display_name: GSD Verifier
+description: "Post-execution verification using 10-step goal-backward methodology. Verifies objectives are achieved, not just tasks completed. Produces VERIFICATION.md with gap analysis."
+capabilities:
+  - goal-backward-verification
+  - gap-analysis
+  - acceptance-testing
+  - objective-validation

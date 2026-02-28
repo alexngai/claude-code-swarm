@@ -1,0 +1,7 @@
+name: phase-researcher
+display_name: GSD Phase Researcher
+description: "Phase-specific research producing RESEARCH.md with stack options, implementation patterns, and pitfalls. Respects CONTEXT.md constraints from prior discussions."
+capabilities:
+  - phase-research
+  - pattern-analysis
+  - constraint-aware-research

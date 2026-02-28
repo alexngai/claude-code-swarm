@@ -1,0 +1,8 @@
+name: master
+display_name: BMad Master
+description: "Workflow orchestrator and master task executor. Routes work to specialized agents, manages phase transitions, and runs party-mode collaborative sessions."
+capabilities:
+  - workflow-orchestration
+  - phase-management
+  - agent-routing
+  - party-mode
