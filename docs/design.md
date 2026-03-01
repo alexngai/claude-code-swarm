@@ -1037,17 +1037,13 @@ This is especially useful for:
 
 **Decision:** MAP task events map to whatever task system is in play. The primary source is Claude Code native task events (agent spawning via the `Agent` tool). openteams task CLI (`openteams task create/update`) is not monitored for MAP events — it's an internal coordination mechanism. MAP provides the observability layer; openteams provides the structural definitions.
 
-### 9.6 Federation configuration ownership
+### ~~9.6 Federation configuration ownership~~ (RESOLVED)
 
-**Q:** Should the swarm plugin configure federation peers on the MAP server, or leave that entirely to the server operator?
+**Decision:** Server operator configures federation peers. The plugin just connects as an agent. The `map.systemId` config field identifies this swarm instance for federation envelope routing.
 
-**Leaning:** Server operator configures federation. The plugin just connects as an agent. The `map.systemId` config field identifies this swarm instance for federation envelope routing. The MAP server decides which systems to federate with.
+### ~~9.7 Sidecar agent identity when multiple team agents are spawned~~ (RESOLVED)
 
-### 9.7 Sidecar agent identity when multiple team agents are spawned
-
-**Q:** The sidecar starts as one agent (e.g., orchestrator). When it registers child agents (executor, planner), does it register them under the same participant connection or create new connections?
-
-**Leaning:** Same connection. The sidecar uses one `AgentConnection` and calls `agents.register()` / `agents.spawn()` to create child agents on behalf of the team. This is simpler than managing multiple WebSocket connections.
+**Decision:** Single connection. The sidecar uses one `AgentConnection` and calls `agents.register()` / `agents.spawn()` to create child agents on behalf of the team.
 
 ---
 
