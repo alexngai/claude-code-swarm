@@ -1,0 +1,7 @@
+name: roadmapper
+display_name: GSD Roadmapper
+description: "Converts requirements into delivery phases where every v1 requirement maps to exactly one phase. Produces ROADMAP.md with 2-5 phases, each with success criteria."
+capabilities:
+  - requirements-decomposition
+  - phase-planning
+  - success-criteria-definition

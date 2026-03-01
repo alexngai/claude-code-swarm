@@ -1,0 +1,8 @@
+{
+  "name": "claude-code-swarm",
+  "description": "Spin up Claude Code agent teams from openteams YAML topologies with optional MAP (Multi-Agent Protocol) observability and coordination. Provides hooks for session lifecycle, agent spawn/complete tracking, and a /swarm skill to launch team configurations.",
+  "version": "0.2.0",
+  "author": {
+    "name": "alexngai"
+  }
+}

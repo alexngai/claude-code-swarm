@@ -1,0 +1,8 @@
+name: executor
+display_name: GSD Executor
+description: "Atomically executes PLAN.md tasks. Handles deviations via 4 rules (security, validation, blocking, discretionary). Commits per task. Pauses at checkpoints."
+capabilities:
+  - task-execution
+  - deviation-handling
+  - atomic-commits
+  - checkpoint-management

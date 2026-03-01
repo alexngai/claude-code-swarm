@@ -1,0 +1,8 @@
+name: debugger
+display_name: GSD Debugger
+description: "Systematic root-cause investigation using the scientific method. Maintains persistent debug state in .planning/debug/. Hypothesis-driven with explicit confidence levels."
+capabilities:
+  - root-cause-analysis
+  - hypothesis-testing
+  - debug-state-management
+  - scientific-method

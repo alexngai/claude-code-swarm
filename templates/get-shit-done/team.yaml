@@ -1,0 +1,154 @@
+name: get-shit-done
+description: "GSD — prompt-native multi-agent system for autonomous codebase development with wave-based parallel execution, goal-backward verification, and checkpoint-based context management"
+version: 1
+roles:
+  - orchestrator
+  - roadmapper
+  - planner
+  - plan-checker
+  - executor
+  - verifier
+  - project-researcher
+  - phase-researcher
+  - research-synthesizer
+  - codebase-mapper
+  - debugger
+  - integration-checker
+
+topology:
+  root:
+    role: orchestrator
+    prompt: prompts/orchestrator.md
+  companions:
+    - role: roadmapper
+      prompt: prompts/roadmapper.md
+    - role: verifier
+      prompt: prompts/verifier.md
+  spawn_rules:
+    orchestrator: [roadmapper, planner, plan-checker, executor, verifier, project-researcher, phase-researcher, research-synthesizer, codebase-mapper, debugger, integration-checker]
+    planner: []
+    plan-checker: []
+    executor: []
+    verifier: []
+    roadmapper: []
+    project-researcher: []
+    phase-researcher: []
+    research-synthesizer: []
+    codebase-mapper: []
+    debugger: []
+    integration-checker: []
+
+communication:
+  enforcement: permissive
+
+  channels:
+    project_lifecycle:
+      description: "High-level project state transitions"
+      signals: [PROJECT_INITIALIZED, PHASE_STARTED, PHASE_COMPLETE, MILESTONE_COMPLETE]
+    planning_events:
+      description: "Planning and research workflow signals"
+      signals: [RESEARCH_COMPLETE, ROADMAP_READY, PLAN_READY, PLAN_VALIDATED, PLAN_REJECTED]
+    execution_events:
+      description: "Task execution and wave coordination"
+      signals: [WAVE_STARTED, TASK_COMPLETE, WAVE_COMPLETE, CHECKPOINT_REACHED, DEVIATION_DETECTED]
+    verification_events:
+      description: "Quality verification and gap detection"
+      signals: [VERIFICATION_PASSED, GAPS_FOUND, UAT_COMPLETE, INTEGRATION_VERIFIED]
+
+  subscriptions:
+    orchestrator:
+      - channel: project_lifecycle
+      - channel: planning_events
+      - channel: execution_events
+      - channel: verification_events
+    roadmapper:
+      - channel: planning_events
+        signals: [RESEARCH_COMPLETE]
+    planner:
+      - channel: planning_events
+        signals: [ROADMAP_READY, PLAN_REJECTED]
+      - channel: verification_events
+        signals: [GAPS_FOUND]
+    plan-checker:
+      - channel: planning_events
+        signals: [PLAN_READY]
+    executor:
+      - channel: execution_events
+        signals: [WAVE_STARTED]
+    verifier:
+      - channel: execution_events
+        signals: [WAVE_COMPLETE]
+      - channel: project_lifecycle
+        signals: [PHASE_COMPLETE]
+    integration-checker:
+      - channel: project_lifecycle
+        signals: [PHASE_COMPLETE]
+
+  emissions:
+    orchestrator: [PROJECT_INITIALIZED, PHASE_STARTED, WAVE_STARTED]
+    roadmapper: [ROADMAP_READY]
+    planner: [PLAN_READY]
+    plan-checker: [PLAN_VALIDATED, PLAN_REJECTED]
+    executor: [TASK_COMPLETE, WAVE_COMPLETE, CHECKPOINT_REACHED, DEVIATION_DETECTED]
+    verifier: [VERIFICATION_PASSED, GAPS_FOUND, UAT_COMPLETE]
+    project-researcher: [RESEARCH_COMPLETE]
+    phase-researcher: [RESEARCH_COMPLETE]
+    research-synthesizer: [RESEARCH_COMPLETE]
+    codebase-mapper: [RESEARCH_COMPLETE]
+    integration-checker: [INTEGRATION_VERIFIED]
+
+  routing:
+    peers:
+      # Research → Roadmap flow
+      - from: research-synthesizer
+        to: roadmapper
+        via: direct
+        signals: [RESEARCH_COMPLETE]
+      # Plan validation loop
+      - from: planner
+        to: plan-checker
+        via: direct
+        signals: [PLAN_READY]
+      - from: plan-checker
+        to: planner
+        via: direct
+        signals: [PLAN_REJECTED]
+      # Verification → Re-planning loop
+      - from: verifier
+        to: planner
+        via: direct
+        signals: [GAPS_FOUND]
+      - from: integration-checker
+        to: planner
+        via: direct
+        signals: [GAPS_FOUND]
+
+# Extension: GSD-specific workflow metadata (stored, not interpreted by openteams)
+gsd:
+  context_management:
+    description: "Each spawned agent gets fresh context. Orchestrator budgets ~15% for itself, agents get ~85%."
+    plan_budget: "50%"
+    quality_threshold: "70%"
+  execution_model:
+    type: "wave-based-parallel"
+    description: "Tasks grouped into dependency waves. Each wave's tasks run in parallel. Waves run sequentially."
+  checkpoint_protocol:
+    types: [human-verify, decision, human-action]
+    description: "Executor pauses at checkpoints, returns structured state. User responds, next executor loads state and continues."
+  commit_strategy: "atomic-per-task"
+  verification_methodology: "goal-backward"
+  workflows:
+    new_project: [project-researcher, research-synthesizer, roadmapper, verifier]
+    plan_phase: [phase-researcher, planner, plan-checker]
+    execute_phase: [executor]  # spawned in waves
+    verify_work: [verifier]
+    debug: [debugger]
+    map_codebase: [codebase-mapper]  # spawned 4x in parallel
+  state_files:
+    - PROJECT.md
+    - REQUIREMENTS.md
+    - ROADMAP.md
+    - STATE.md
+    - CONTEXT.md
+    - PLAN.md
+    - VERIFICATION.md

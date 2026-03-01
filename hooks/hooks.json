@@ -1,0 +1,59 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd || echo \".\"); bash \"$PLUGIN_DIR/scripts/bootstrap.sh\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" inject; fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" agent-spawning; fi"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" agent-completed; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" turn-completed; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
