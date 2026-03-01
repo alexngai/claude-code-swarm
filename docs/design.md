@@ -4,7 +4,16 @@ Design document for integrating MAP (Multi-Agent Protocol) and sessionlog into t
 
 ## Status
 
-**Draft** — iterating on architecture and scope.
+**Draft v2** — updated with decisions from design review.
+
+### Key decisions made
+
+- **openteams** is structural only — team topology, roles, spawn rules. Its messaging layer (`openteams message send/poll`) is dropped in favor of MAP.
+- **MAP** handles all runtime communication — observability events, agent coordination, and (v2) inter-agent messaging.
+- **sessionlog** is fully independent — the swarm plugin checks its status but does not manage its lifecycle.
+- **Sidecar mode is configurable** — session-scoped (starts/stops with the session) or persistent (user manages externally).
+- **MAP server** is user-provisioned — the plugin connects, doesn't start a server.
+- **MAP scope** is per swarm team — all agents in a team share one scope.
 
 ---
 
@@ -27,10 +36,28 @@ templates/                  ← bundled team topologies (get-shit-done, bmad-met
 
 ### What we want to add
 
-1. **MAP** — Real-time agent-to-agent communication protocol, with observability and coordination
+1. **MAP** — Real-time observability and coordination protocol for the agent swarm
 2. **sessionlog** — Session tracking, checkpointing, and rewind capability
 
 Both are opt-in via `.claude-swarm.json` configuration.
+
+### What changes about openteams
+
+openteams retains its role as the **structural layer** — team topology definitions, role specifications, spawn rules, and signal/channel schemas. Its runtime messaging (`openteams message send/poll`) is superseded by MAP, which provides:
+- Push delivery instead of polling
+- Real-time observability via event subscriptions
+- Cross-turn message injection via hooks
+- Structured addressing (by agent, role, scope, hierarchy)
+
+openteams CLI commands retained:
+- `openteams template load` — initialize team state
+- `openteams generate all` — generate role artifacts
+- `openteams task list/create/update` — task lifecycle
+- `openteams template emit/events` — signal emission (maps to MAP events)
+
+openteams CLI commands dropped:
+- `openteams message send` — replaced by MAP `agent.send()`
+- `openteams message poll` — replaced by MAP sidecar inbox + hook injection
 
 ---
 
@@ -38,17 +65,110 @@ Both are opt-in via `.claude-swarm.json` configuration.
 
 ### 2.1 MAP (Multi-Agent Protocol)
 
-**Package:** `@multi-agent-protocol/sdk` (npm)
+**Package:** `@multi-agent-protocol/sdk@0.0.12` (npm)
 
-MAP provides structured agent-to-agent messaging with:
-- **MAPServer** — central message router
-- **AgentConnection** — per-agent connection (register, send, receive)
-- **ClientConnection** — for dashboards/observers
-- **Addressing** — `{ agent }`, `{ role }`, `{ scope }`, `{ children }`, `{ parent }`, `{ agents: [] }`
-- **Transports** — WebSocket (`websocketStream`), stdio (`ndJsonStream`), in-process (`createStreamPair`)
-- **Wire format** — NDJSON
+#### Core types (from SDK)
 
-MAP also has a Mail system (conversations, threads, turns) for structured dialogue — a v2 concern.
+```typescript
+// Message — the fundamental unit
+interface Message<T = unknown> {
+  id: MessageId;        // ULID, auto-generated
+  from: ParticipantId;  // sender (agent ID or participant ID)
+  to: Address;          // recipient(s)
+  timestamp: Timestamp; // ISO 8601
+  payload?: T;          // arbitrary JSON
+  meta?: MessageMeta;   // delivery semantics, priority, correlation
+}
+
+// Addressing — flexible targeting
+type Address =
+  | string                // shorthand agent ID
+  | { agent: AgentId }    // direct to one agent
+  | { agents: AgentId[] } // multi-target
+  | { scope: ScopeId }    // all agents in scope
+  | { role: string; within?: ScopeId }  // by role, optionally scoped
+  | { parent: true }      // parent agent
+  | { children: true }    // all children
+  | { broadcast: true }   // all agents in system
+
+// MessageMeta — optional delivery control
+interface MessageMeta {
+  timestamp?: Timestamp;
+  relationship?: "parent-to-child" | "child-to-parent" | "peer" | "broadcast";
+  expectsResponse?: boolean;
+  correlationId?: string;
+  priority?: "urgent" | "high" | "normal" | "low";
+  delivery?: "fire-and-forget" | "acknowledged" | "guaranteed";
+  ttlMs?: number;
+}
+
+// Agent — registered entity
+interface Agent {
+  id: AgentId;
+  name?: string;
+  description?: string;
+  parent?: AgentId;
+  children?: AgentId[];
+  state: "registered" | "active" | "busy" | "idle" | "suspended" | "stopping" | "stopped" | "failed";
+  role?: string;
+  scopes?: ScopeId[];
+  metadata?: Record<string, unknown>;
+}
+
+// AgentConnection — per-agent client
+class AgentConnection {
+  constructor(stream: Stream, options?: AgentConnectionOptions);
+  static connect(url: string, options?: AgentConnectOptions): Promise<AgentConnection>;
+
+  connect(options?): Promise<ConnectResponseResult>;
+  disconnect(): Promise<string | undefined>;
+
+  send(to: Address, payload?: unknown, meta?: MessageMeta): Promise<SendResponseResult>;
+  sendToParent(payload?, meta?): Promise<SendResponseResult>;
+  sendToChildren(payload?, meta?): Promise<SendResponseResult>;
+
+  onMessage(handler: (message: Message) => void): this;
+  offMessage(handler): this;
+
+  updateState(state: AgentState): Promise<Agent>;
+  subscribe(filter?: SubscriptionFilter): Promise<Subscription>;
+}
+
+// AgentConnectOptions — used with static connect()
+interface AgentConnectOptions {
+  name?: string;
+  role?: string;
+  parent?: AgentId;
+  scopes?: ScopeId[];
+  metadata?: Record<string, unknown>;
+  auth?: { method: 'bearer' | 'api-key' | 'mtls' | 'none'; token?: string };
+  reconnection?: true | false | AgentReconnectionOptions;
+}
+```
+
+#### Built-in event types
+
+MAP server emits these events automatically (observable via `subscribe()`):
+
+```
+agent_registered         agent_unregistered       agent_state_changed
+participant_connected    participant_disconnected
+message_sent             message_delivered        message_failed
+scope_created            scope_deleted
+scope_member_joined      scope_member_left
+```
+
+These are free observability — any `ClientConnection` subscriber sees them without the agents doing anything special.
+
+#### Transports
+
+```typescript
+import { websocketStream, ndJsonStream, createStreamPair } from '@multi-agent-protocol/sdk';
+
+websocketStream(ws)       // WebSocket (remote servers)
+ndJsonStream(stdin, out)  // stdio (local pipes)
+createStreamPair()        // in-process (testing)
+```
 
 ### 2.2 sessionlog
 
@@ -63,24 +183,24 @@ sessionlog tracks Claude Code sessions in git with zero runtime dependencies:
 - **Rewind** — restore project to any checkpoint state
 - **Resume** — discover and continue sessions from branches
 
-sessionlog installs 7 Claude Code hooks programmatically into `.claude/settings.json`:
+sessionlog installs its own Claude Code hooks programmatically into `.claude/settings.json`:
 - `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`
 - `PreToolUse(Task)`, `PostToolUse(Task)` — subagent lifecycle
 - `PostToolUse(TodoWrite)` — compaction events
 
 And 4 git hooks: `prepare-commit-msg`, `commit-msg`, `post-commit`, `pre-push`.
 
-### 2.3 openteams (existing)
+### 2.3 openteams (structural layer only)
 
 **Package:** `openteams` (npm)
 
-openteams provides team topology templates and coordination primitives:
+openteams provides the team definition layer:
 - **Templates** — YAML topology definitions with roles, spawn rules, communication channels
-- **Task management** — `openteams task list/create/update`
-- **Messaging** — `openteams message send/poll`
-- **Signals** — `openteams template emit/events` (channel-based pub/sub)
+- **Task management** — `openteams task list/create/update` (retained for structured task lifecycle)
+- **Signal definitions** — channel/signal schemas from `team.yaml` (emitted as MAP events)
+- **Code generation** — `openteams generate all` produces role artifacts
 
-Agents interact with openteams entirely via CLI commands in Bash tool calls.
+**Not used at runtime:** `openteams message send/poll` (replaced by MAP).
 
 ---
 
@@ -119,55 +239,65 @@ Claude Code hooks are fire-and-forget shell commands. Key properties:
     │ Bootstrap │     │  Inject  │    │   Emit     │
     │ (start    │     │  MAP     │    │   MAP      │
     │ sidecar,  │     │  inbox   │    │   events   │
-    │ sessionlog│     │  context │    │            │
-    │ enable)   │     └────┬─────┘    └─────┬──────┘
+    │ check     │     │  context │    │            │
+    │ sessionlog│     └────┬─────┘    └─────┬──────┘
     └─────┬─────┘          │                │
           │           ┌────▼────────────────▼──────┐
           │           │      MAP Sidecar           │
           ▼           │  (persistent WebSocket)    │
     ┌───────────┐     │                            │
     │ sessionlog│     │  inbox/  ← received msgs   │
-    │ (tracks   │     │  outbox/ → sent events     │
-    │  session) │     └────────────┬───────────────┘
-    └───────────┘                  │
-                             ┌─────▼──────┐
-                             │ MAP Server │
-                             └────────────┘
+    │ (own hooks│     │  outbox/ → sent events     │
+    │ own life- │     └────────────┬───────────────┘
+    │ cycle)    │                  │
+    └───────────┘           ┌─────▼──────┐
+                            │ MAP Server │
+                            │ (user-     │
+                            │ provisioned│
+                            └────────────┘
 ```
 
 ### 3.3 MAP Integration — Sidecar with Fire-and-Forget Fallback
 
-#### Sidecar model (preferred — bidirectional)
+#### Sidecar mode (configurable)
 
-A persistent Node.js process runs alongside the Claude Code session:
+The sidecar is a persistent Node.js process that maintains a WebSocket connection to the MAP server. Two lifecycle modes:
 
-1. **Started by** the `SessionStart` hook
-2. **Connects to** the MAP server via WebSocket
-3. **Registers** as the agent's MAP identity (role name from topology)
-4. **Listens** for incoming MAP messages
-5. **Writes** received messages to a local inbox file (`.generated/map/inbox.jsonl`)
-6. **Accepts** outbound messages via a local mechanism (UNIX socket or file watch on `.generated/map/outbox.jsonl`)
+**`"session"` mode (default):**
+- Started by the `SessionStart` hook as a background process
+- Stopped by the `SessionEnd` hook (SIGTERM to PID)
+- Self-terminates after inactivity timeout (30 min) as safety net
+- Tied to the Claude Code session lifecycle
 
-The `UserPromptSubmit` hook reads `.generated/map/inbox.jsonl`, formats pending messages, and outputs them to stdout — injecting them as context for the agent's next turn.
+**`"persistent"` mode:**
+- User starts the sidecar independently (e.g., as a daemon or in a separate terminal)
+- Plugin hooks connect to it via UNIX socket — if it's running, use it; if not, fall back
+- Survives across Claude Code sessions
+- Useful for long-running projects with frequent session restarts
+
+In both modes, the sidecar:
+1. Connects to the MAP server via WebSocket
+2. Registers as the agent's MAP identity (role + team name)
+3. Joins the team's MAP scope
+4. Listens for incoming messages, writes to inbox file
+5. Accepts outbound messages via UNIX socket, forwards to MAP server
+
+#### Sidecar ↔ hooks communication
 
 ```
-Agent Turn N:
-  1. User submits prompt (or orchestrator dispatches task)
-  2. UserPromptSubmit hook fires
-  3. Hook reads .generated/map/inbox.jsonl
-  4. Hook outputs: "[MAP] 2 messages received:\n  - from:planner: Task 3 ready for execution\n  - from:verifier: Module A passed verification"
-  5. Agent sees these messages as part of its context
-  6. Agent acts on messages, potentially sending responses via openteams or MAP outbox
+┌──────────────┐                      ┌──────────────┐
+│  Hook        │ ──── UNIX socket ──→ │  Sidecar     │
+│  (short-     │ ←── file read ────── │  (long-      │
+│   lived)     │                      │   running)   │
+└──────────────┘                      └──────────────┘
+
+Outbound: hook writes event JSON to sidecar via UNIX socket (.generated/map/sidecar.sock)
+Inbound:  hook reads .generated/map/inbox.jsonl (written by sidecar)
 ```
 
 #### Fire-and-forget fallback (outbound only)
 
-If the sidecar isn't running (startup failed, MAP server unavailable), hooks fall back to one-shot connections:
-
-1. Each hook invocation that needs to emit a MAP event opens a WebSocket, sends, closes
-2. ~100-200ms overhead per hook — acceptable for session lifecycle events
-3. No inbound capability — agent only emits, cannot receive
-4. Graceful degradation — hooks check for sidecar PID file first, fall back silently
+If the sidecar isn't running, hooks fall back to one-shot WebSocket connections:
 
 ```javascript
 // Pseudocode: hook fallback logic
@@ -177,125 +307,298 @@ if (sidecarSocket) {
   sidecarSocket.write(JSON.stringify(event));
 } else {
   // Slow path: direct MAP server connection (fire-and-forget)
-  const ws = new WebSocket(config.map.server);
-  const stream = websocketStream(ws);
-  const agent = new AgentConnection(stream, { name: roleName, role: roleName });
-  await agent.connect();
-  await agent.send({ to: { scope: teamScope }, payload: event });
+  const agent = await AgentConnection.connect(config.map.server, {
+    name: agentName,
+    role: roleName,
+    scopes: [teamScope]
+  });
+  await agent.send({ scope: teamScope }, event);
   await agent.disconnect();
 }
 ```
 
-#### Why not openteams message poll for inbound?
-
-openteams has `openteams message poll` which agents can call in Bash. The generated AGENT.md files already include polling instructions. However:
-
-- **No push mechanism** — agents only poll when their instructions tell them to, and only when actively running
-- **Latency** — polling is O(seconds) at best; MAP delivery is O(milliseconds)
-- **No guaranteed delivery** — if an agent doesn't poll, messages sit indefinitely
-- **Cross-turn blindness** — between turns, the agent isn't running and can't poll
-
-The MAP sidecar solves all of these: it maintains a persistent connection, queues messages instantly, and the hook injection ensures the agent sees them at the start of every turn.
-
-**openteams messaging remains useful** for structured task coordination (task lifecycle, signal emission). MAP handles the real-time transport layer underneath. A future version of openteams could use MAP as its transport, but that's an openteams-level change, not a plugin change.
+~100-200ms overhead per event. No inbound capability. Acceptable for lifecycle events.
 
 ### 3.4 Scope Model
 
-**One MAP scope per swarm team.** When a swarm launches, all agents in that team share a MAP scope derived from the team name:
+**One MAP scope per swarm team.** When a swarm launches, all agents in that team share a MAP scope:
 
 ```
-scope = "swarm:<team-name>"
+scope = "swarm:<team-name>"        // e.g., "swarm:get-shit-done"
+agent = "<team-name>-<role>"       // e.g., "get-shit-done-orchestrator"
 ```
 
-For example, a `get-shit-done` launch creates scope `swarm:get-shit-done`. All 12 agents register under this scope. MAP messages addressed to `{ scope: "swarm:get-shit-done" }` reach all team members.
+All agents register with their scope. MAP messages addressed to `{ scope: "swarm:get-shit-done" }` reach all team members.
 
-Individual addressing uses `{ agent: "<team>-<role>" }` (matching the AGENT.md `name` field, e.g., `get-shit-done-orchestrator`).
-
-Role-based addressing uses `{ role: "<role>" }` for cases where multiple agents share a role.
+Addressing options:
+- `{ agent: "get-shit-done-executor" }` — direct to one agent
+- `{ role: "executor", within: "swarm:get-shit-done" }` — all executors in this team
+- `{ scope: "swarm:get-shit-done" }` — broadcast to entire team
+- `{ parent: true }` — to spawning agent
+- `{ children: true }` — to all spawned agents
 
 ### 3.5 sessionlog Integration
 
-**Opt-in via config.** sessionlog is enabled only when explicitly configured in `.claude-swarm.json`:
+**Fully independent.** sessionlog manages its own lifecycle — installation, hook registration, session tracking. The swarm plugin does NOT call `sessionlog enable` or install sessionlog.
 
-```json
+The plugin's role is limited to:
+1. **Check** — on `SessionStart`, verify if sessionlog is active and report status
+2. **Warn** — if `sessionlog.enabled: true` in config but sessionlog isn't installed/active, output a warning
+3. **Coexist** — the plugin's hooks and sessionlog's hooks run independently; Claude Code merges them
+
+```
+SessionStart hook output:
+  "## Claude Code Swarm (openteams)
+   Team template: get-shit-done
+   MAP: connected (scope: swarm:get-shit-done)
+   Sessionlog: ✓ active          ← or "⚠ not installed (optional)"
+   Use /swarm to launch the team."
+```
+
+**What sessionlog provides for swarms:**
+- Full session tracking across the orchestrator and all spawned agents (via its own `PreToolUse(Task)` / `PostToolUse(Task)` hooks)
+- Token usage rollup across the entire agent tree
+- File change aggregation
+- Checkpoint/rewind — restore the project to before the swarm made changes
+- Secret-redacted transcript storage for post-mortem
+
+**What the user does:** Install and enable sessionlog independently:
+```bash
+npm install -g sessionlog
+sessionlog enable --agent claude-code
+```
+
+---
+
+## 4. MAP Event Model
+
+### 4.1 Design principles
+
+- **Observability first** — v1 focuses on making the swarm visible (what agents exist, what they're doing, when they spawn/complete)
+- **Task events** — Claude Code native task lifecycle is surfaced as MAP events
+- **Inter-agent messages** — agent-to-agent communication is observable by any MAP subscriber
+- **Structured payloads** — events use typed payloads (not free-form text) so dashboards can parse them
+- **MAP-native events are free** — `agent_registered`, `agent_state_changed`, `message_sent`, etc. are emitted by the MAP server automatically when agents register and send messages. We only need custom events for swarm-specific semantics.
+
+### 4.2 Outbound events (hooks → MAP)
+
+These are custom events emitted by the plugin's hooks. They supplement the MAP-native events with swarm-specific context.
+
+#### Agent lifecycle events
+
+Emitted via `PreToolUse(Task)` and `PostToolUse(Task)` hooks:
+
+```typescript
+// When orchestrator spawns an executor
 {
-  "template": "get-shit-done",
-  "sessionlog": {
-    "enabled": true
+  to: { scope: "swarm:get-shit-done" },
+  payload: {
+    type: "swarm.agent.spawned",
+    agent: "get-shit-done-executor",
+    role: "executor",
+    parent: "get-shit-done-orchestrator",
+    task: "Implement authentication module"     // summary of the spawning prompt
+  },
+  meta: { relationship: "parent-to-child" }
+}
+
+// When executor completes
+{
+  to: { scope: "swarm:get-shit-done" },
+  payload: {
+    type: "swarm.agent.completed",
+    agent: "get-shit-done-executor",
+    role: "executor",
+    parent: "get-shit-done-orchestrator",
+    filesTouched: ["src/auth.ts", "src/auth.test.ts"],
+    durationMs: 45000
+  },
+  meta: { relationship: "child-to-parent" }
+}
+```
+
+#### Turn lifecycle events
+
+Emitted via `UserPromptSubmit` and `Stop` hooks:
+
+```typescript
+// Turn started
+{
+  to: { scope: "swarm:get-shit-done" },
+  payload: {
+    type: "swarm.turn.started",
+    agent: "get-shit-done-orchestrator",
+    role: "orchestrator",
+    promptLength: 150
+  }
+}
+
+// Turn completed
+{
+  to: { scope: "swarm:get-shit-done" },
+  payload: {
+    type: "swarm.turn.completed",
+    agent: "get-shit-done-orchestrator",
+    role: "orchestrator",
+    stopReason: "end_turn"
   }
 }
 ```
 
-When enabled, the `SessionStart` hook runs:
+#### Task events (Claude Code native tasks)
 
-```bash
-command -v sessionlog >/dev/null 2>&1 && sessionlog enable --agent claude-code 2>/dev/null || true
+Emitted via `PreToolUse(Task)` and `PostToolUse(Task)` — mapping Claude Code's task lifecycle to MAP:
+
+```typescript
+// Task dispatched (orchestrator creates a task for a subagent)
+{
+  to: { scope: "swarm:get-shit-done" },
+  payload: {
+    type: "swarm.task.dispatched",
+    taskId: "tool-use-id-abc123",
+    agent: "get-shit-done-orchestrator",
+    targetRole: "executor",
+    description: "Implement user login endpoint"
+  }
+}
+
+// Task completed
+{
+  to: { scope: "swarm:get-shit-done" },
+  payload: {
+    type: "swarm.task.completed",
+    taskId: "tool-use-id-abc123",
+    agent: "get-shit-done-executor",
+    parent: "get-shit-done-orchestrator",
+    status: "completed"
+  }
+}
 ```
 
-This is idempotent — sessionlog's `enable()` checks if hooks are already installed and skips. It writes its hooks to `.claude/settings.json` (project-level), which Claude Code merges with plugin hooks from `hooks/hooks.json`.
+### 4.3 MAP-native events (free observability)
 
-**What sessionlog provides for swarms:**
-- Full session tracking across the orchestrator and all spawned agents (via `PreToolUse(Task)` / `PostToolUse(Task)` hooks)
-- Token usage rollup across the entire agent tree (`calculateTotalTokenUsage`)
-- File change aggregation (`extractAllModifiedFiles`)
-- Checkpoint/rewind — restore the project to a state before the swarm made changes
-- Secret-redacted transcript storage for post-mortem analysis
+These are emitted automatically by the MAP server — no plugin work needed. A `ClientConnection` subscriber (e.g., dashboard) sees:
 
-**What we don't need to build:** sessionlog already handles subagent tracking natively. No per-agent sessionlog configuration is needed.
+| Event | When | Data |
+|---|---|---|
+| `agent_registered` | Sidecar registers agent | `{ agentId, name, role, scopes }` |
+| `agent_state_changed` | Agent calls `updateState()` | `{ agentId, previousState, newState }` |
+| `agent_unregistered` | Agent disconnects | `{ agentId, reason }` |
+| `message_sent` | Any `send()` call | `{ messageId, from, to }` |
+| `message_delivered` | Message reaches recipient | `{ messageId, deliveredTo }` |
+| `scope_member_joined` | Agent joins scope | `{ scopeId, agentId }` |
+| `scope_member_left` | Agent leaves scope | `{ scopeId, agentId }` |
+
+Combined with our custom events, a dashboard gets a complete picture of the swarm without agents needing to do anything special.
+
+### 4.4 Agent state mapping
+
+The sidecar maps Claude Code session phases to MAP agent states:
+
+| Claude Code Phase | MAP AgentState | When |
+|---|---|---|
+| Session started | `"active"` | `SessionStart` hook |
+| Processing prompt | `"busy"` | `UserPromptSubmit` hook |
+| Waiting for input | `"idle"` | `Stop` hook |
+| Session ended | `"stopped"` | `SessionEnd` hook |
+| Spawning subagent | (child registered as `"active"`) | `PreToolUse(Task)` |
+| Subagent done | (child state → `"stopped"`) | `PostToolUse(Task)` |
+
+### 4.5 Inbound messages (MAP → agent context)
+
+When the sidecar receives messages addressed to this agent, it queues them in `.generated/map/inbox.jsonl`. The `UserPromptSubmit` hook reads the inbox and injects them as context.
+
+**Injected format (structured markdown):**
+
+```markdown
+## [MAP] 2 pending messages
+
+**From get-shit-done-verifier** (role: verifier, 3s ago)
+> Module A verification failed. 3 test failures in src/auth.test.ts.
+> Priority: high
+
+**From get-shit-done-planner** (role: planner, 8s ago)
+> Task 4 is ready for execution. Files: src/db.ts, src/models/user.ts
+> Correlation: task-4-impl
+```
+
+This format is:
+- Readable by LLMs (structured markdown, not raw JSON)
+- Includes metadata (sender role, age, priority) without overwhelming
+- Actionable — the agent can respond by sending messages back via MAP
 
 ---
 
-## 4. Hook Ordering
+## 5. Hook Ordering
 
-Hook execution order matters. Claude Code runs hooks in declaration order within each event type. The plugin's hooks (from `hooks/hooks.json`) and sessionlog's hooks (from `.claude/settings.json`) are merged by Claude Code.
+### 5.1 Design principle
 
-### 4.1 Desired Execution Order
+**The swarm plugin controls its own hook ordering. sessionlog controls its own.** They run independently. The plugin does not call sessionlog's CLI or manage its hooks.
+
+Claude Code merges hooks from multiple sources:
+- Plugin hooks (`hooks/hooks.json`) — the swarm plugin's hooks
+- Project hooks (`.claude/settings.json`) — sessionlog's hooks (and any user hooks)
+
+The plugin's `SessionStart` hook checks sessionlog status but doesn't depend on sessionlog running first. sessionlog is resilient to ordering — its `SessionStart` hook is idempotent.
+
+### 5.2 Plugin hook ordering (within `hooks/hooks.json`)
+
+The plugin's own hooks execute in declaration order:
 
 #### SessionStart
 
-| Order | Source | Action | Rationale |
-|---|---|---|---|
-| 1 | sessionlog | `session-start` — establish tracking baseline | Must be first so the entire session is tracked, including swarm bootstrap |
-| 2 | swarm plugin | Install openteams, load team config, output team context | Core plugin functionality |
-| 3 | swarm plugin (MAP) | Start MAP sidecar, register agent | Sidecar must start after team config is known |
+```
+1. Read .claude-swarm.json (config)
+2. Ensure openteams is installed
+3. Check sessionlog status (report, don't manage)
+4. [if map.enabled] Start sidecar (session mode) or verify sidecar running (persistent mode)
+5. Output team context + status to stdout (injected into conversation)
+```
 
 #### UserPromptSubmit
 
-| Order | Source | Action | Rationale |
-|---|---|---|---|
-| 1 | sessionlog | `user-prompt-submit` — record turn start | Track before any modifications |
-| 2 | swarm plugin (MAP) | Read MAP inbox, inject messages as context | Agent sees coordination messages before processing prompt |
+```
+1. [if map.enabled] Read .generated/map/inbox.jsonl
+2. Format pending messages as structured markdown
+3. Clear processed messages from inbox
+4. Output to stdout (injected into agent's turn context)
+```
 
-#### Stop / PostToolUse
+#### PreToolUse (matcher: "Task")
 
-| Order | Source | Action | Rationale |
-|---|---|---|---|
-| 1 | swarm plugin (MAP) | Emit MAP event (turn completed, tool result) | Report to MAP server |
-| 2 | sessionlog | `stop` / `post-task` — update session state | Track after swarm events are emitted |
+```
+1. [if map.enabled] Emit swarm.agent.spawned event
+2. [if map.enabled] Emit swarm.task.dispatched event
+```
 
-### 4.2 Implementation Strategy
+#### PostToolUse (matcher: "Task")
 
-Since sessionlog installs its hooks via `.claude/settings.json` and the swarm plugin uses `hooks/hooks.json`, we need to control ordering:
+```
+1. [if map.enabled] Emit swarm.agent.completed event
+2. [if map.enabled] Emit swarm.task.completed event
+```
 
-**Option A: Have the swarm's SessionStart hook call sessionlog directly** instead of relying on sessionlog's self-installed hooks. This gives us explicit control over ordering. Downside: we're managing sessionlog's lifecycle, which couples the two.
+#### Stop
 
-**Option B: Rely on Claude Code's merge order** (plugin hooks before project hooks, or vice versa). This requires understanding and depending on Claude Code's undocumented merge behavior. Fragile.
+```
+1. [if map.enabled] Emit swarm.turn.completed event
+2. [if map.enabled] Update agent state to "idle"
+```
 
-**Option C (recommended): Use a single entry-point script** that orchestrates all three systems in sequence. The `SessionStart` hook in `hooks/hooks.json` calls a script that:
-1. Enables sessionlog (if configured)
-2. Loads team config and installs openteams
-3. Starts MAP sidecar (if configured)
-4. Outputs combined context to stdout
+#### SessionEnd
 
-For `UserPromptSubmit`, add a new hook entry in `hooks/hooks.json` that:
-1. Reads MAP inbox and outputs injected context
-2. (sessionlog's own `user-prompt-submit` hook runs independently)
+```
+1. [if map.enabled, session mode] Send SIGTERM to sidecar PID
+2. [if map.enabled] Update agent state to "stopped"
+```
 
-This approach gives us explicit control over our own ordering while letting sessionlog manage its own hooks independently. The only ordering dependency is that sessionlog's `SessionStart` hook runs before ours — which we solve by calling `sessionlog enable` as the first step in our own `SessionStart` hook.
+### 5.3 No ordering dependency on sessionlog
+
+sessionlog's hooks run in whatever order Claude Code assigns them. The swarm plugin neither depends on nor interferes with sessionlog's execution. If sessionlog isn't installed, the swarm plugin works identically — it just reports "sessionlog: not installed" in the context output.
 
 ---
 
-## 5. Configuration Schema
+## 6. Configuration Schema
 
 ### `.claude-swarm.json`
 
@@ -306,7 +609,8 @@ This approach gives us explicit control over our own ordering while letting sess
   "map": {
     "enabled": true,
     "server": "ws://localhost:8080",
-    "scope": "my-project-swarm"
+    "scope": "my-project-swarm",
+    "sidecar": "session"
   },
 
   "sessionlog": {
@@ -319,9 +623,10 @@ This approach gives us explicit control over our own ordering while letting sess
 |---|---|---|---|
 | `template` | `string` | — | Team topology name or path (required) |
 | `map.enabled` | `boolean` | `false` | Enable MAP integration |
-| `map.server` | `string` | `"ws://localhost:8080"` | MAP server WebSocket URL |
+| `map.server` | `string` | `"ws://localhost:8080"` | MAP server WebSocket URL (must be running) |
 | `map.scope` | `string` | `"swarm:<template>"` | MAP scope for this team (auto-derived if omitted) |
-| `sessionlog.enabled` | `boolean` | `false` | Enable sessionlog session tracking |
+| `map.sidecar` | `"session" \| "persistent"` | `"session"` | Sidecar lifecycle mode |
+| `sessionlog.enabled` | `boolean` | `false` | Check for sessionlog and report status |
 
 ### Minimal config (no integrations)
 
@@ -336,7 +641,8 @@ This approach gives us explicit control over our own ordering while letting sess
   "template": "get-shit-done",
   "map": {
     "enabled": true,
-    "server": "ws://localhost:8080"
+    "server": "ws://localhost:8080",
+    "sidecar": "session"
   },
   "sessionlog": {
     "enabled": true
@@ -346,24 +652,24 @@ This approach gives us explicit control over our own ordering while letting sess
 
 ---
 
-## 6. File Changes
+## 7. File Changes
 
 ### New files
 
 | File | Purpose |
 |---|---|
-| `scripts/map-sidecar.mjs` | MAP sidecar process — persistent WebSocket, inbox/outbox management |
-| `scripts/map-hook.mjs` | MAP hook helper — reads inbox for injection, emits events (fire-and-forget fallback) |
-| `scripts/bootstrap.sh` | Unified SessionStart entry point — orchestrates sessionlog, openteams, and MAP |
+| `scripts/map-sidecar.mjs` | MAP sidecar process — persistent WebSocket, inbox/outbox, agent registration |
+| `scripts/map-hook.mjs` | MAP hook helper — inbox injection, event emission, fallback logic |
+| `scripts/bootstrap.sh` | Unified SessionStart entry point — openteams, MAP, sessionlog status |
 | `docs/design.md` | This document |
 
 ### Modified files
 
 | File | Change |
 |---|---|
-| `hooks/hooks.json` | Replace inline SessionStart command with `bootstrap.sh`; add `UserPromptSubmit` hook for MAP inbox injection |
-| `settings.json` | Add `Bash(sessionlog *)` permission; add `Bash(node *)` for sidecar |
-| `scripts/generate-agents.mjs` | Add MAP coordination section to generated AGENT.md files (scope, addressing) |
+| `hooks/hooks.json` | Replace inline SessionStart; add `UserPromptSubmit`, `PreToolUse(Task)`, `PostToolUse(Task)`, `Stop`, `SessionEnd` hooks |
+| `settings.json` | Add `Bash(node *)` permission for sidecar/hooks |
+| `scripts/generate-agents.mjs` | Replace openteams messaging section with MAP coordination in generated AGENT.md; add scope/addressing info |
 | `skills/swarm/SKILL.md` | Document MAP and sessionlog in the launch flow |
 | `CLAUDE.md` | Update architecture description |
 
@@ -372,15 +678,14 @@ This approach gives us explicit control over our own ordering while letting sess
 | File | Purpose |
 |---|---|
 | `.generated/map/inbox.jsonl` | Queued inbound MAP messages |
-| `.generated/map/outbox.jsonl` | Pending outbound MAP messages (for sidecar) |
-| `.generated/map/sidecar.pid` | Sidecar process PID |
-| `.generated/map/sidecar.sock` | UNIX socket for local communication |
+| `.generated/map/sidecar.pid` | Sidecar process PID (session mode) |
+| `.generated/map/sidecar.sock` | UNIX socket for hook ↔ sidecar communication |
 
 ---
 
-## 7. Detailed Flows
+## 8. Detailed Flows
 
-### 7.1 Session Start (full flow)
+### 8.1 Session Start (full flow)
 
 ```
 Claude Code starts session
@@ -394,205 +699,222 @@ scripts/bootstrap.sh
         ├─ 1. Read .claude-swarm.json
         │     Parse template, map, sessionlog config
         │
-        ├─ 2. [if sessionlog.enabled]
-        │     npm ls -g sessionlog || npm install -g sessionlog
-        │     sessionlog enable --agent claude-code
-        │     # sessionlog now has its own hooks in .claude/settings.json
-        │
-        ├─ 3. Install openteams (if needed)
+        ├─ 2. Install openteams (if needed)
         │     command -v openteams || npm install -g openteams
         │
+        ├─ 3. [if sessionlog.enabled]
+        │     Check: command -v sessionlog && sessionlog status
+        │     Report status (do NOT install or enable)
+        │     Warn if not active: "sessionlog configured but not installed"
+        │
         ├─ 4. [if map.enabled]
-        │     npm ls -g @multi-agent-protocol/sdk || npm install -g @multi-agent-protocol/sdk
-        │     Start sidecar: node scripts/map-sidecar.mjs &
-        │     Write PID to .generated/map/sidecar.pid
+        │     4a. [sidecar=session]
+        │         node scripts/map-sidecar.mjs \
+        │           --server ws://localhost:8080 \
+        │           --scope swarm:get-shit-done \
+        │           --agent get-shit-done-orchestrator \
+        │           --role orchestrator &
+        │         Write PID to .generated/map/sidecar.pid
+        │     4b. [sidecar=persistent]
+        │         Check if sidecar is running via .generated/map/sidecar.sock
+        │         Warn if not running
         │
         └─ 5. Output to stdout (injected as context):
               "## Claude Code Swarm (openteams)
                Team template: get-shit-done
-               MAP: connected (ws://localhost:8080, scope: swarm:get-shit-done)
-               Sessionlog: enabled
+               MAP: connected (scope: swarm:get-shit-done)
+               Sessionlog: ✓ active
                Use /swarm to launch the team."
 ```
 
-### 7.2 MAP Message Flow (inbound)
+### 8.2 MAP Message Flow (inbound)
 
 ```
-External agent or orchestrator sends MAP message
+External agent sends MAP message
         │
         ▼
-MAP Server routes to scope/agent
+MAP Server routes to { agent: "gsd-executor" }
         │
         ▼
-Sidecar receives message via WebSocket
+Sidecar receives via WebSocket (onMessage handler)
         │
         ▼
-Sidecar writes to .generated/map/inbox.jsonl:
-  {"from":"planner","to":{"agent":"gsd-executor"},"payload":{...},"ts":"..."}
+Sidecar appends to .generated/map/inbox.jsonl:
+  {"id":"01HX...","from":"gsd-planner","to":{"agent":"gsd-executor"},
+   "timestamp":"2026-03-01T10:30:45Z",
+   "payload":{"type":"task.ready","taskId":"4","files":["src/db.ts"]},
+   "meta":{"priority":"high"}}
         │
         ▼
-[Next user turn or orchestrator dispatch]
+[Next turn: user submits prompt or orchestrator dispatches]
         │
         ▼
 UserPromptSubmit hook fires
         │
         ▼
-scripts/map-hook.mjs reads inbox.jsonl
+scripts/map-hook.mjs --action inject
         │
-        ├─ Formats messages as context text
-        ├─ Clears processed messages from inbox
-        └─ Outputs to stdout:
-            "[MAP] 1 pending message:
-             From planner: Task 3 is ready. Files: src/auth.ts, src/db.ts
-             Priority: high"
+        ├─ Read .generated/map/inbox.jsonl
+        ├─ Format as structured markdown
+        ├─ Truncate inbox (clear processed messages)
+        └─ Output to stdout:
+            "## [MAP] 1 pending message
+             **From gsd-planner** (role: planner, 3s ago)
+             > Task 4 is ready. Files: src/db.ts
+             > Priority: high"
         │
         ▼
 Agent sees MAP messages as part of its turn context
 ```
 
-### 7.3 MAP Message Flow (outbound)
+### 8.3 MAP Event Flow (outbound)
 
 ```
-Agent completes a tool use or turn
+Agent spawns a subagent (PreToolUse: Task)
         │
         ▼
-PostToolUse or Stop hook fires
+PreToolUse(Task) hook fires (hooks/hooks.json)
         │
         ▼
-scripts/map-hook.mjs
+scripts/map-hook.mjs --action emit
+  Receives on stdin: { tool_name: "Task", tool_input: { name: "executor", prompt: "..." } }
         │
         ├─ [if sidecar running]
-        │     Write event to sidecar via UNIX socket
-        │     Sidecar sends to MAP server
+        │     Connect to .generated/map/sidecar.sock
+        │     Send: { type: "swarm.agent.spawned", agent: "gsd-executor", ... }
+        │     Sidecar forwards to MAP server
         │
         └─ [if sidecar not running — fallback]
-              Direct WebSocket to MAP server
-              Open, send, close (~100-200ms)
+              AgentConnection.connect(config.map.server, { name: agentName })
+              agent.send({ scope: teamScope }, { type: "swarm.agent.spawned", ... })
+              agent.disconnect()
 ```
 
-### 7.4 Session with sessionlog
+### 8.4 Dashboard / Observer View
 
-```
-Session starts → sessionlog tracks via its own hooks
-        │
-Agent tree: orchestrator spawns planner, executor, verifier
-        │
-sessionlog's PreToolUse(Task) / PostToolUse(Task) hooks
-automatically track each subagent spawn/completion
-        │
-User commits code → git hooks fire:
-  prepare-commit-msg: adds Sessionlog-Checkpoint trailer
-  post-commit: writes committed checkpoint with redacted transcript
-        │
-If something goes wrong:
-  sessionlog rewind → restores to pre-swarm state
+A MAP `ClientConnection` can subscribe to the team scope and see the full swarm:
+
+```typescript
+import { ClientConnection, websocketStream, EVENT_TYPES } from '@multi-agent-protocol/sdk';
+
+const client = new ClientConnection(websocketStream(ws));
+await client.connect();
+
+// Subscribe to all events in the swarm scope
+const sub = await client.subscribe({
+  scopes: ["swarm:get-shit-done"],
+  eventTypes: [
+    EVENT_TYPES.AGENT_REGISTERED,
+    EVENT_TYPES.AGENT_STATE_CHANGED,
+    EVENT_TYPES.MESSAGE_SENT,
+    EVENT_TYPES.MESSAGE_DELIVERED
+  ]
+});
+
+sub.onEvent((event) => {
+  // See: agent registered, state changes, all messages, task events
+  console.log(`[${event.type}]`, event.data);
+});
+
+// Also receive custom swarm events via message subscription
+client.onMessage((msg) => {
+  // See: swarm.agent.spawned, swarm.task.dispatched, etc.
+  console.log(`[${msg.payload?.type}]`, msg.payload);
+});
 ```
 
 ---
 
-## 8. Open Questions
+## 9. Open Questions
 
-### 8.1 Sidecar lifecycle management
+### 9.1 Sidecar crash recovery
 
-**Q:** How do we ensure the sidecar is cleaned up when the session ends?
-
-**Options:**
-- A. `SessionEnd` hook sends SIGTERM to sidecar PID
-- B. Sidecar self-terminates after inactivity timeout (e.g., 30 minutes)
-- C. Both — hook cleanup + timeout safety net
-
-**Leaning:** C — belt and suspenders.
-
-### 8.2 MAP server provisioning
-
-**Q:** Who runs the MAP server? Is it the user's responsibility, or does the plugin start one?
+**Q:** If the sidecar crashes mid-session (session mode), should we detect and restart it?
 
 **Options:**
-- A. User provides server URL in config — plugin connects only
-- B. Plugin auto-starts a local MAP server if none configured
-- C. Both — auto-start local server by default, configurable remote server
+- A. `UserPromptSubmit` hook checks sidecar health, restarts if needed
+- B. No restart — fall back to fire-and-forget for the rest of the session
+- C. Sidecar uses Node.js `--watch` or a simple process monitor
 
-**Leaning:** A for v1 — keep scope small. User runs `npx @multi-agent-protocol/server` or similar. B is a v2 enhancement.
+**Leaning:** A — the hook already checks for the sidecar socket. If it's gone, it could restart. But restarting means re-registering with the MAP server, which means potential message loss during the gap.
 
-### 8.3 MAP message format for injected context
-
-**Q:** How should MAP messages be formatted when injected via `UserPromptSubmit`?
-
-**Options:**
-- A. Plain text summary (human-readable)
-- B. Structured markdown with metadata
-- C. JSON block that the agent can parse
-
-**Leaning:** B — structured but readable. Agents are LLMs, not JSON parsers.
-
-### 8.4 Interaction between openteams messaging and MAP messaging
-
-**Q:** Should MAP replace openteams messaging, augment it, or run independently?
-
-**Current thinking:** They serve different purposes:
-- **openteams messaging** — structured task coordination (task lifecycle, signals, team-scoped operations). Agents invoke via CLI.
-- **MAP messaging** — real-time transport layer for observability and cross-agent notifications. Handled by hooks/sidecar.
-
-For v1, they run independently. For v2, openteams could use MAP as its transport backend (an openteams-level change).
-
-### 8.5 Multiple concurrent swarms
+### 9.2 Multiple concurrent swarms
 
 **Q:** What happens if a user launches two swarm teams in the same session?
 
-**Leaning:** Not supported in v1. Each session has one `.claude-swarm.json` config and one MAP scope. Multiple teams would need separate MAP scopes and separate sidecars — add complexity later if needed.
+**Leaning:** Not supported in v1. Each session has one `.claude-swarm.json` config and one MAP scope. Document this limitation.
 
-### 8.6 Hook merge ordering guarantees
+### 9.3 Hook merge ordering guarantees
 
-**Q:** Does Claude Code guarantee that plugin hooks (hooks/hooks.json) run before project hooks (.claude/settings.json), or vice versa?
+**Q:** Does Claude Code guarantee plugin hooks run before or after project hooks?
 
-**Action needed:** Test empirically or check Claude Code documentation. The Option C design in section 4.2 minimizes this dependency by having the swarm plugin call sessionlog directly rather than relying on merge order.
+**Current approach:** We don't depend on ordering between our hooks and sessionlog's hooks. Our hooks are self-contained. Test empirically to verify no conflicts.
+
+### 9.4 Subagent MAP registration
+
+**Q:** Should spawned subagents (executors, planners, etc.) each get their own MAP identity via the sidecar?
+
+**Options:**
+- A. One sidecar per session, registers as the root agent. Subagent events are reported by the root's hooks.
+- B. Each subagent gets a separate MAP registration (sidecar registers on their behalf when `PreToolUse(Task)` fires).
+
+**Leaning:** B — richer observability. The sidecar calls `agents.register({ name: "gsd-executor", parent: "gsd-orchestrator", ... })` when it sees a spawn event. The MAP server then tracks the full agent tree natively.
+
+### 9.5 openteams task events vs MAP task events
+
+**Q:** openteams has `openteams task create/update`. Should task state changes emit MAP events too?
+
+**Leaning:** Yes. The `PostToolUse(Bash)` hook could detect `openteams task update` commands and emit corresponding MAP events. But this is fragile (parsing Bash commands). Alternative: let openteams emit MAP events natively (openteams-level change). For v1, only Claude Code native task events (agent spawning = task dispatch) are tracked.
 
 ---
 
-## 9. Implementation Phases
+## 10. Implementation Phases
 
 ### Phase 1: Foundation
 
 - [ ] Create `scripts/bootstrap.sh` — unified SessionStart entry point
 - [ ] Update `hooks/hooks.json` to use bootstrap script
-- [ ] Add sessionlog opt-in logic (check config, enable if present)
+- [ ] Add sessionlog status check (not lifecycle management)
 - [ ] Update `.claude-swarm.json` schema with `map` and `sessionlog` fields
 - [ ] Update `settings.json` permissions
+- [ ] Update `scripts/generate-agents.mjs` to drop openteams messaging, add MAP context
 
-### Phase 2: MAP Outbound (observability)
+### Phase 2: MAP Sidecar + Outbound Events
 
-- [ ] Create `scripts/map-hook.mjs` — fire-and-forget MAP event emitter
-- [ ] Add `PostToolUse` and `Stop` hooks for MAP event emission
-- [ ] Test with a local MAP server + client dashboard
+- [ ] Create `scripts/map-sidecar.mjs` — persistent WebSocket, agent registration, inbox/outbox
+- [ ] Create `scripts/map-hook.mjs` — event emission with sidecar/fallback logic
+- [ ] Add `PreToolUse(Task)`, `PostToolUse(Task)`, `Stop`, `SessionEnd` hooks
+- [ ] Implement sidecar lifecycle (session + persistent modes)
+- [ ] Test with a local MAP server + `ClientConnection` subscriber
 
-### Phase 3: MAP Sidecar (bidirectional)
+### Phase 3: MAP Inbound (context injection)
 
-- [ ] Create `scripts/map-sidecar.mjs` — persistent WebSocket process
 - [ ] Add `UserPromptSubmit` hook for MAP inbox injection
-- [ ] Implement sidecar lifecycle (start on SessionStart, stop on SessionEnd)
-- [ ] Implement fallback detection (sidecar running? → use socket; else → fire-and-forget)
+- [ ] Implement inbox formatting (structured markdown)
+- [ ] Test end-to-end: external sender → sidecar inbox → hook injection → agent sees message
 
-### Phase 4: Agent-level MAP integration
+### Phase 4: Subagent MAP Registration
 
-- [ ] Update `scripts/generate-agents.mjs` to add MAP context to AGENT.md files
-- [ ] Add MAP addressing info (scope, agent name) to generated agents
-- [ ] Test end-to-end: orchestrator dispatches task → executor receives via MAP → executor reports completion via MAP
+- [ ] Sidecar registers child agents on `PreToolUse(Task)` events
+- [ ] Sidecar unregisters child agents on `PostToolUse(Task)` events
+- [ ] MAP server tracks full agent tree (parent/child relationships)
+- [ ] Dashboard can query `agents.get(orchestratorId, { include: { descendants: true } })`
 
 ### Phase 5: Polish
 
 - [ ] Update `/swarm` SKILL.md with MAP/sessionlog documentation
 - [ ] Update CLAUDE.md with new architecture
-- [ ] Error handling and edge cases (MAP server down, sidecar crash, etc.)
-- [ ] Cleanup: SessionEnd hook tears down sidecar
+- [ ] Error handling: MAP server down, sidecar crash, malformed messages
+- [ ] Agent state transitions (active → busy → idle → stopped)
 
 ---
 
-## 10. Dependencies
+## 11. Dependencies
 
 | Package | Purpose | Install method | Required? |
 |---|---|---|---|
-| `openteams` | Team topologies, coordination CLI | `npm install -g openteams` | Yes |
-| `sessionlog` | Session tracking, checkpointing | `npm install -g sessionlog` | Only if `sessionlog.enabled` |
-| `@multi-agent-protocol/sdk` | MAP agent connections | `npm install -g @multi-agent-protocol/sdk` | Only if `map.enabled` |
+| `openteams` | Team topologies, task CLI | `npm install -g openteams` | Yes |
+| `sessionlog` | Session tracking, checkpointing | User installs independently | Only if `sessionlog.enabled` |
+| `@multi-agent-protocol/sdk` | MAP connections, messaging | `npm install -g @multi-agent-protocol/sdk` | Only if `map.enabled` |
 
-All are installed on-demand by `scripts/bootstrap.sh`. The plugin itself has zero bundled npm dependencies.
+openteams is installed on-demand by `scripts/bootstrap.sh`. sessionlog is user-managed. MAP SDK is installed on-demand when MAP is enabled. The plugin itself has zero bundled npm dependencies.
