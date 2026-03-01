@@ -159,14 +159,40 @@ echo ""
 echo "Per-role prompts are available at \`$GENERATED_DIR/roles/<role>/SKILL.md\`"
 echo "Read a role's SKILL.md before spawning an agent for that role."
 echo ""
-echo "To coordinate via openteams shared state:"
-echo '```bash'
 TEAM_NAME=$(node -e "
   const yaml = require('js-yaml');
   const fs = require('fs');
   const m = yaml.load(fs.readFileSync('$TEMPLATE_PATH/team.yaml', 'utf-8'));
   console.log(m.name);
 " 2>/dev/null || basename "$TEMPLATE_PATH")
+
+# ── 6. Write roles.json for MAP hook integration ────────────────────────────
+
+node -e "
+  try {
+    const yaml = require('js-yaml');
+    const fs = require('fs');
+    const m = yaml.load(fs.readFileSync('$TEMPLATE_PATH/team.yaml', 'utf-8'));
+    const roles = {
+      team: m.name || '',
+      roles: m.roles || [],
+      root: m.topology?.root?.role || '',
+      companions: (m.topology?.companions || []).map(c => c.role || c)
+    };
+    fs.mkdirSync('.generated/map', { recursive: true });
+    fs.writeFileSync('.generated/map/roles.json', JSON.stringify(roles, null, 2));
+  } catch (e) {
+    process.stderr.write('Warning: could not write roles.json: ' + e.message + '\n');
+  }
+" 2>/dev/null || true
+
+# ── 7. Output coordination instructions ─────────────────────────────────────
+
+echo "To coordinate via openteams shared state:"
+echo '```bash'
 echo "openteams task list $TEAM_NAME"
-echo "openteams message poll $TEAM_NAME --agent <role> --mark-delivered"
+echo "openteams task update $TEAM_NAME <id> --status completed"
 echo '```'
+echo ""
+echo "**MAP:** Messages from teammates are automatically injected into your context."
+echo "Check for **[MAP]** sections at the start of each turn."

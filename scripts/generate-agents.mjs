@@ -246,12 +246,29 @@ function generateAgentMd({
   lines.push(skillContent);
   lines.push("");
 
-  // Add openteams coordination instructions
-  lines.push("## Team Coordination (openteams)");
+  // Add team coordination instructions
+  lines.push("## Team Coordination");
   lines.push("");
   lines.push(
-    `You are part of the **${teamName}** team. Use the openteams CLI for coordination:`
+    `You are part of the **${teamName}** team (MAP scope: \`swarm:${teamName}\`).`
   );
+  lines.push("");
+  lines.push("### Communication");
+  lines.push("");
+  lines.push(
+    "Messages from other team agents are automatically injected into your context"
+  );
+  lines.push(
+    'at the start of each turn. Check for **"[MAP]"** sections in your context'
+  );
+  lines.push("for pending messages from teammates.");
+  lines.push("");
+  lines.push(
+    "To coordinate with teammates, use the **Agent tool** to dispatch work to specific"
+  );
+  lines.push("roles, or update task status via the openteams CLI.");
+  lines.push("");
+  lines.push("### Task management (openteams)");
   lines.push("");
   lines.push("```bash");
   lines.push(`# Check your tasks`);
@@ -264,19 +281,13 @@ function generateAgentMd({
   lines.push("");
   lines.push(`# Complete a task`);
   lines.push(`openteams task update ${teamName} <id> --status completed`);
-  lines.push("");
-  lines.push(`# Check messages for you`);
-  lines.push(
-    `openteams message poll ${teamName} --agent ${roleName} --mark-delivered`
-  );
-  lines.push("");
-  lines.push(`# Send a message to a teammate`);
-  lines.push(
-    `openteams message send ${teamName} --to <agent> --content "..." --summary "..."`
-  );
+  lines.push("```");
 
   if (manifest.communication?.channels) {
     lines.push("");
+    lines.push("### Signals (openteams)");
+    lines.push("");
+    lines.push("```bash");
     lines.push(`# Emit a signal`);
     lines.push(
       `openteams template emit ${teamName} -c <channel> -s <signal> --sender ${roleName}`
@@ -284,8 +295,8 @@ function generateAgentMd({
     lines.push("");
     lines.push(`# Check events visible to your role`);
     lines.push(`openteams template events ${teamName} --role ${roleName}`);
+    lines.push("```");
   }
-  lines.push("```");
 
   return lines.join("\n") + "\n";
 }

@@ -6,7 +6,51 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '## Claude Code Swarm (openteams)' && echo '' && if ! command -v openteams >/dev/null 2>&1; then echo 'openteams CLI not found. Installing...' >&2 && npm install -g openteams 2>&1 >&2; fi && if [ -f .claude-swarm.json ]; then TMPL=$(node -e \"console.log(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).template||'')\" 2>/dev/null) && if [ -n \"$TMPL\" ]; then echo \"Team template configured: **$TMPL**\" && echo '' && echo 'Use `/swarm` to launch the team, or ask me to spin up the team.' && echo '' && echo 'Available commands:' && echo '- `/swarm` — Launch the configured team topology' && echo '- `/swarm <template>` — Launch a specific template (get-shit-done, bmad-method)'; else echo 'No template configured in .claude-swarm.json'; fi; else echo 'No `.claude-swarm.json` found. Use `/swarm` to launch a team topology.' && echo '' && echo 'Built-in templates: **get-shit-done**, **bmad-method**' && echo '' && echo 'Quick setup: create `.claude-swarm.json` with `{\"template\": \"get-shit-done\"}`'; fi"
+            "command": "PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd || echo \".\"); bash \"$PLUGIN_DIR/scripts/bootstrap.sh\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" inject; fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" agent-spawning; fi"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" agent-completed; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd)/scripts/map-hook.mjs\" turn-completed; fi"
           }
         ]
       }

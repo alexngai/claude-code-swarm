@@ -111,7 +111,21 @@ Agent(name="verifier", prompt="<contents of verifier SKILL.md>")
 ## Important Notes
 
 - **Always read** a role's `.generated/roles/<role>/SKILL.md` before spawning — it contains specialized prompts, communication config, and CLI references
-- **Use openteams CLI** for coordination: `openteams task list`, `openteams message send`, `openteams template emit`
+- **Use openteams CLI** for task management: `openteams task list`, `openteams task update`
 - **Respect spawn_rules** — only spawn roles that the current agent is permitted to spawn
 - **Communication channels** define information flow — agents emit signals and subscribe to channels as defined in the topology
 - The generated SKILL.md files include CLI quick-reference sections tailored to each role
+
+## Integrations
+
+### MAP (Multi-Agent Protocol)
+
+If MAP is enabled in `.claude-swarm.json`, a sidecar process connects to the MAP server and:
+- **Registers team agents** as they are spawned (matching topology roles)
+- **Emits lifecycle events** (agent spawned/completed, task dispatched/completed, turn start/end)
+- **Injects incoming messages** into agent context at the start of each turn (look for `[MAP]` sections)
+- **Provides observability** — dashboards can subscribe to events via the MAP server or federation
+
+### Sessionlog
+
+If sessionlog is enabled independently (via `sessionlog enable --agent claude-code`), it automatically tracks the full agent tree including all spawned subagents, providing checkpointing and rewind capability.

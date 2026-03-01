@@ -5,7 +5,9 @@
   "permissions": {
     "allow": [
       "Bash(openteams *)",
-      "Bash(npm install -g openteams)"
+      "Bash(npm install -g openteams)",
+      "Bash(npm install -g @multi-agent-protocol/sdk)",
+      "Bash(node *)"
     ]
   }
 }
