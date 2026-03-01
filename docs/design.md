@@ -254,6 +254,14 @@ Claude Code hooks are fire-and-forget shell commands. Key properties:
                             │ MAP Server │
                             │ (user-     │
                             │ provisioned│
+                            └─────┬──────┘
+                                  │ federation
+                            ┌─────▼──────┐
+                            │ Listeners  │
+                            │ (dashboard,│
+                            │  logging,  │
+                            │  other     │
+                            │  systems)  │
                             └────────────┘
 ```
 
@@ -268,6 +276,7 @@ The sidecar is a persistent Node.js process that maintains a WebSocket connectio
 - Stopped by the `SessionEnd` hook (SIGTERM to PID)
 - Self-terminates after inactivity timeout (30 min) as safety net
 - Tied to the Claude Code session lifecycle
+- **Best-effort auto-recovery:** if the sidecar crashes mid-session, the `UserPromptSubmit` hook detects the missing socket, restarts the sidecar, and re-registers agents. Messages received during the gap are lost, but the connection resumes for subsequent turns.
 
 **`"persistent"` mode:**
 - User starts the sidecar independently (e.g., as a daemon or in a separate terminal)
@@ -319,6 +328,33 @@ if (sidecarSocket) {
 
 ~100-200ms overhead per event. No inbound capability. Acceptable for lifecycle events.
 
+#### Best-effort sidecar auto-recovery
+
+When the `UserPromptSubmit` hook detects the sidecar is not running (socket connection fails), it attempts recovery:
+
+```
+UserPromptSubmit hook fires
+        │
+        ├─ Try connect to .generated/map/sidecar.sock
+        │
+        ├─ [if socket exists and responds]
+        │     Sidecar is healthy → read inbox, proceed normally
+        │
+        ├─ [if socket missing or connection refused]
+        │     1. Check .generated/map/sidecar.pid — is process alive?
+        │     2. If dead: restart sidecar (node scripts/map-sidecar.mjs &)
+        │     3. Wait briefly for socket to appear (up to 2s)
+        │     4. If recovery succeeds: re-register agents, proceed
+        │     5. If recovery fails: log warning, fall back to fire-and-forget
+        │
+        └─ Read inbox (may be empty if sidecar was down)
+```
+
+Recovery is best-effort:
+- Messages received by the MAP server while the sidecar was down are lost (MAP doesn't buffer for disconnected agents by default)
+- Agent registrations are re-created, but any state (inbox, in-flight messages) from the crashed sidecar is gone
+- The hook never blocks the agent's turn — if recovery takes too long, it falls back silently
+
 ### 3.4 Scope Model
 
 **One MAP scope per swarm team.** When a swarm launches, all agents in that team share a MAP scope:
@@ -337,7 +373,67 @@ Addressing options:
 - `{ parent: true }` — to spawning agent
 - `{ children: true }` — to all spawned agents
 
-### 3.5 sessionlog Integration
+### 3.5 Federation-Based Observability
+
+MAP's federation layer provides a clean mechanism for broadcasting swarm events to external systems (dashboards, logging, other agent systems) without requiring them to connect to the same MAP server.
+
+#### How federation works
+
+The MAP server can establish federation connections with peer systems. When a federation peer is connected, events and messages are automatically wrapped in `FederationEnvelope` and forwarded:
+
+```typescript
+interface FederationEnvelope<T = unknown> {
+  payload: T;                    // The message or event
+  federation: {
+    sourceSystem: string;        // "system-claude-swarm"
+    targetSystem: string;        // "system-dashboard"
+    hopCount: number;            // Loop prevention
+    maxHops?: number;
+    path?: string[];             // Systems traversed (debugging)
+    originTimestamp: Timestamp;
+    correlationId?: string;      // Cross-system tracing
+  };
+}
+```
+
+#### Configuration
+
+The MAP server (user-provisioned) handles federation configuration. The swarm plugin just needs to know its own system identity:
+
+```json
+{
+  "map": {
+    "enabled": true,
+    "server": "ws://localhost:8080",
+    "systemId": "system-claude-swarm"
+  }
+}
+```
+
+The MAP server operator configures federation peers (dashboards, logging systems, other agent platforms) on the server side. The swarm plugin's sidecar connects as an agent — the server handles federation routing transparently.
+
+#### What observers see
+
+A federated observer (e.g., a dashboard on a different MAP system) receives:
+1. **MAP-native events** — `agent_registered`, `agent_state_changed`, `message_sent` etc., wrapped in federation envelopes
+2. **Custom swarm events** — `swarm.agent.spawned`, `swarm.task.dispatched` etc., as message payloads in federation envelopes
+3. **Full routing metadata** — source system, hop path, correlation IDs for cross-system tracing
+
+This means a dashboard doesn't need to know about Claude Code or hooks — it just subscribes to federation events from `system-claude-swarm` and gets a complete view of the swarm.
+
+#### Federation vs direct subscription
+
+| | Direct subscription | Federation |
+|---|---|---|
+| **Observer location** | Same MAP server | Any MAP system |
+| **Setup** | `ClientConnection` to server | Federation peer config on server |
+| **Latency** | Lowest (same process) | Slightly higher (cross-system) |
+| **Isolation** | Observer sees everything | Can filter by system/scope |
+| **Use case** | Local development dashboard | Multi-team observability, logging services |
+
+Both work. Federation is the right choice when observers are on separate infrastructure or when you want to aggregate events from multiple swarm instances.
+
+### 3.6 sessionlog Integration
 
 **Fully independent.** sessionlog manages its own lifecycle — installation, hook registration, session tracking. The swarm plugin does NOT call `sessionlog enable` or install sessionlog.
 
@@ -445,18 +541,19 @@ Emitted via `UserPromptSubmit` and `Stop` hooks:
 }
 ```
 
-#### Task events (Claude Code native tasks)
+#### Task events
 
-Emitted via `PreToolUse(Task)` and `PostToolUse(Task)` — mapping Claude Code's task lifecycle to MAP:
+Emitted via `PreToolUse(Task)` and `PostToolUse(Task)`. These map to whatever task system is active — Claude Code's native `Agent` tool dispatches are the primary source. The event format is task-system-agnostic:
 
 ```typescript
-// Task dispatched (orchestrator creates a task for a subagent)
+// Task dispatched (orchestrator spawns a team agent for a task)
 {
   to: { scope: "swarm:get-shit-done" },
   payload: {
     type: "swarm.task.dispatched",
-    taskId: "tool-use-id-abc123",
-    agent: "get-shit-done-orchestrator",
+    taskId: "tool-use-id-abc123",         // Claude Code tool_use ID
+    agent: "get-shit-done-orchestrator",  // dispatcher
+    targetAgent: "get-shit-done-executor",
     targetRole: "executor",
     description: "Implement user login endpoint"
   }
@@ -470,14 +567,68 @@ Emitted via `PreToolUse(Task)` and `PostToolUse(Task)` — mapping Claude Code's
     taskId: "tool-use-id-abc123",
     agent: "get-shit-done-executor",
     parent: "get-shit-done-orchestrator",
-    status: "completed"
+    status: "completed",
+    filesTouched: ["src/auth.ts", "src/auth.test.ts"]
   }
 }
 ```
 
-### 4.3 MAP-native events (free observability)
+The `taskId` is the Claude Code `tool_use` ID from the hook's stdin data. This provides natural correlation between dispatch and completion without requiring a separate task tracking system.
 
-These are emitted automatically by the MAP server — no plugin work needed. A `ClientConnection` subscriber (e.g., dashboard) sees:
+### 4.3 Agent registration model
+
+**Team-level agents get separate MAP registrations. Internal subagents do not.**
+
+When the orchestrator spawns a team role (e.g., executor, planner, verifier), the sidecar registers a new MAP agent with parent/child relationship:
+
+```typescript
+// Sidecar receives PreToolUse(Task) event from hook
+// The Task is spawning a team agent (name matches a role in the topology)
+await connection.send(/* agents.register */, {
+  agentId: "get-shit-done-executor",
+  name: "executor",
+  role: "executor",
+  parent: "get-shit-done-orchestrator",
+  scopes: ["swarm:get-shit-done"],
+  metadata: { template: "get-shit-done", position: "spawned" }
+});
+```
+
+When the team agent completes, the sidecar unregisters it:
+```typescript
+await connection.send(/* agents.unregister */, {
+  agentId: "get-shit-done-executor",
+  reason: "task completed"
+});
+```
+
+**What counts as a "team agent":** Any agent spawned via the `Agent` tool whose name matches a role defined in the openteams topology (`team.yaml`). The sidecar checks the spawned agent's name against the team's role list.
+
+**What does NOT get registered:** If a team agent (e.g., executor) internally spawns Claude Code subagents for its own use (e.g., a research subagent), those are internal to the executor and invisible to MAP. This keeps the MAP agent tree clean — it mirrors the team topology, not every Claude Code process.
+
+This means a dashboard querying `agents.get("get-shit-done-orchestrator", { include: { descendants: true } })` sees:
+```
+orchestrator
+├── planner
+├── executor
+├── verifier
+└── researcher
+```
+
+Not:
+```
+orchestrator
+├── planner
+│   └── planner-internal-search-subagent    ← NOT registered
+├── executor
+│   ├── executor-internal-test-runner       ← NOT registered
+│   └── executor-internal-linter            ← NOT registered
+└── verifier
+```
+
+### 4.4 MAP-native events (free observability)
+
+These are emitted automatically by the MAP server — no plugin work needed. A `ClientConnection` subscriber or federated observer sees:
 
 | Event | When | Data |
 |---|---|---|
@@ -491,7 +642,7 @@ These are emitted automatically by the MAP server — no plugin work needed. A `
 
 Combined with our custom events, a dashboard gets a complete picture of the swarm without agents needing to do anything special.
 
-### 4.4 Agent state mapping
+### 4.5 Agent state mapping
 
 The sidecar maps Claude Code session phases to MAP agent states:
 
@@ -504,7 +655,7 @@ The sidecar maps Claude Code session phases to MAP agent states:
 | Spawning subagent | (child registered as `"active"`) | `PreToolUse(Task)` |
 | Subagent done | (child state → `"stopped"`) | `PostToolUse(Task)` |
 
-### 4.5 Inbound messages (MAP → agent context)
+### 4.6 Inbound messages (MAP → agent context)
 
 When the sidecar receives messages addressed to this agent, it queues them in `.generated/map/inbox.jsonl`. The `UserPromptSubmit` hook reads the inbox and injects them as context.
 
@@ -610,6 +761,7 @@ sessionlog's hooks run in whatever order Claude Code assigns them. The swarm plu
     "enabled": true,
     "server": "ws://localhost:8080",
     "scope": "my-project-swarm",
+    "systemId": "system-claude-swarm",
     "sidecar": "session"
   },
 
@@ -625,6 +777,7 @@ sessionlog's hooks run in whatever order Claude Code assigns them. The swarm plu
 | `map.enabled` | `boolean` | `false` | Enable MAP integration |
 | `map.server` | `string` | `"ws://localhost:8080"` | MAP server WebSocket URL (must be running) |
 | `map.scope` | `string` | `"swarm:<template>"` | MAP scope for this team (auto-derived if omitted) |
+| `map.systemId` | `string` | `"system-claude-swarm"` | Federation system identity for this swarm instance |
 | `map.sidecar` | `"session" \| "persistent"` | `"session"` | Sidecar lifecycle mode |
 | `sessionlog.enabled` | `boolean` | `false` | Check for sessionlog and report status |
 
@@ -642,6 +795,7 @@ sessionlog's hooks run in whatever order Claude Code assigns them. The swarm plu
   "map": {
     "enabled": true,
     "server": "ws://localhost:8080",
+    "systemId": "my-project-swarm",
     "sidecar": "session"
   },
   "sessionlog": {
@@ -792,6 +946,8 @@ scripts/map-hook.mjs --action emit
 
 ### 8.4 Dashboard / Observer View
 
+#### Option A: Direct subscription (same MAP server)
+
 A MAP `ClientConnection` can subscribe to the team scope and see the full swarm:
 
 ```typescript
@@ -823,20 +979,43 @@ client.onMessage((msg) => {
 });
 ```
 
+#### Option B: Federation (separate MAP system)
+
+A dashboard running on a different MAP system receives events via federation. The MAP server forwards all scope events wrapped in `FederationEnvelope`:
+
+```typescript
+// Dashboard on a separate MAP system
+// Server-side: federation peer configured to accept from "system-claude-swarm"
+
+// Dashboard subscribes to federation events
+const sub = await client.subscribe({
+  eventTypes: [
+    EVENT_TYPES.FEDERATION_CONNECTED,
+    EVENT_TYPES.AGENT_REGISTERED,      // forwarded from swarm system
+    EVENT_TYPES.AGENT_STATE_CHANGED,   // forwarded from swarm system
+    EVENT_TYPES.MESSAGE_SENT           // forwarded from swarm system
+  ]
+});
+
+// Events arrive with federation metadata for cross-system tracing
+sub.onEvent((event) => {
+  // event.data may include federation.sourceSystem = "system-claude-swarm"
+  console.log(`[federated:${event.type}]`, event.data);
+});
+```
+
+This is especially useful for:
+- **Multi-team observability** — aggregate events from multiple swarm instances on different machines
+- **Logging services** — forward swarm events to a centralized logging/monitoring system
+- **Cross-platform coordination** — a dashboard system that monitors both Claude Code swarms and other agent platforms
+
 ---
 
 ## 9. Open Questions
 
-### 9.1 Sidecar crash recovery
+### ~~9.1 Sidecar crash recovery~~ (RESOLVED)
 
-**Q:** If the sidecar crashes mid-session (session mode), should we detect and restart it?
-
-**Options:**
-- A. `UserPromptSubmit` hook checks sidecar health, restarts if needed
-- B. No restart — fall back to fire-and-forget for the rest of the session
-- C. Sidecar uses Node.js `--watch` or a simple process monitor
-
-**Leaning:** A — the hook already checks for the sidecar socket. If it's gone, it could restart. But restarting means re-registering with the MAP server, which means potential message loss during the gap.
+**Decision:** Best-effort auto-recovery. The `UserPromptSubmit` hook detects missing sidecar and restarts it. Messages during the gap are lost. See section 3.3 "Best-effort sidecar auto-recovery" for details.
 
 ### 9.2 Multiple concurrent swarms
 
@@ -850,21 +1029,25 @@ client.onMessage((msg) => {
 
 **Current approach:** We don't depend on ordering between our hooks and sessionlog's hooks. Our hooks are self-contained. Test empirically to verify no conflicts.
 
-### 9.4 Subagent MAP registration
+### ~~9.4 Subagent MAP registration~~ (RESOLVED)
 
-**Q:** Should spawned subagents (executors, planners, etc.) each get their own MAP identity via the sidecar?
+**Decision:** Team-level agents (roles from the openteams topology) get separate MAP registrations with parent/child relationships. Internal subagents spawned by a team agent do NOT get registered. See section 4.3 for details.
 
-**Options:**
-- A. One sidecar per session, registers as the root agent. Subagent events are reported by the root's hooks.
-- B. Each subagent gets a separate MAP registration (sidecar registers on their behalf when `PreToolUse(Task)` fires).
+### ~~9.5 openteams task events vs MAP task events~~ (RESOLVED)
 
-**Leaning:** B — richer observability. The sidecar calls `agents.register({ name: "gsd-executor", parent: "gsd-orchestrator", ... })` when it sees a spawn event. The MAP server then tracks the full agent tree natively.
+**Decision:** MAP task events map to whatever task system is in play. The primary source is Claude Code native task events (agent spawning via the `Agent` tool). openteams task CLI (`openteams task create/update`) is not monitored for MAP events — it's an internal coordination mechanism. MAP provides the observability layer; openteams provides the structural definitions.
 
-### 9.5 openteams task events vs MAP task events
+### 9.6 Federation configuration ownership
 
-**Q:** openteams has `openteams task create/update`. Should task state changes emit MAP events too?
+**Q:** Should the swarm plugin configure federation peers on the MAP server, or leave that entirely to the server operator?
 
-**Leaning:** Yes. The `PostToolUse(Bash)` hook could detect `openteams task update` commands and emit corresponding MAP events. But this is fragile (parsing Bash commands). Alternative: let openteams emit MAP events natively (openteams-level change). For v1, only Claude Code native task events (agent spawning = task dispatch) are tracked.
+**Leaning:** Server operator configures federation. The plugin just connects as an agent. The `map.systemId` config field identifies this swarm instance for federation envelope routing. The MAP server decides which systems to federate with.
+
+### 9.7 Sidecar agent identity when multiple team agents are spawned
+
+**Q:** The sidecar starts as one agent (e.g., orchestrator). When it registers child agents (executor, planner), does it register them under the same participant connection or create new connections?
+
+**Leaning:** Same connection. The sidecar uses one `AgentConnection` and calls `agents.register()` / `agents.spawn()` to create child agents on behalf of the team. This is simpler than managing multiple WebSocket connections.
 
 ---
 
@@ -887,17 +1070,20 @@ client.onMessage((msg) => {
 - [ ] Implement sidecar lifecycle (session + persistent modes)
 - [ ] Test with a local MAP server + `ClientConnection` subscriber
 
-### Phase 3: MAP Inbound (context injection)
+### Phase 3: MAP Inbound + Recovery
 
 - [ ] Add `UserPromptSubmit` hook for MAP inbox injection
 - [ ] Implement inbox formatting (structured markdown)
+- [ ] Implement best-effort sidecar auto-recovery in `UserPromptSubmit` hook
 - [ ] Test end-to-end: external sender → sidecar inbox → hook injection → agent sees message
+- [ ] Test recovery: kill sidecar mid-session → next prompt restarts it
 
-### Phase 4: Subagent MAP Registration
+### Phase 4: Team Agent Registration
 
-- [ ] Sidecar registers child agents on `PreToolUse(Task)` events
-- [ ] Sidecar unregisters child agents on `PostToolUse(Task)` events
-- [ ] MAP server tracks full agent tree (parent/child relationships)
+- [ ] Sidecar registers team-level agents on `PreToolUse(Task)` when name matches topology role
+- [ ] Sidecar unregisters team agents on `PostToolUse(Task)` completion
+- [ ] Ignore internal subagents (names not matching topology roles)
+- [ ] MAP server tracks team agent tree (parent/child relationships)
 - [ ] Dashboard can query `agents.get(orchestratorId, { include: { descendants: true } })`
 
 ### Phase 5: Polish
@@ -906,6 +1092,7 @@ client.onMessage((msg) => {
 - [ ] Update CLAUDE.md with new architecture
 - [ ] Error handling: MAP server down, sidecar crash, malformed messages
 - [ ] Agent state transitions (active → busy → idle → stopped)
+- [ ] Verify federation event forwarding works with federated observers
 
 ---
 
