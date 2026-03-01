@@ -515,86 +515,63 @@ case 'agent-completed': {
 
 ---
 
-## Phase 5: Code Generation Updates
+## Phase 5: Native Teams Integration
 
-**Goal:** Update `generate-agents.mjs` and `team-loader.sh` to replace openteams messaging with MAP.
+**Goal:** Replace all openteams runtime CLI usage with Claude Code native team features. openteams is now config/generation only.
 
-### 5.1 Update `scripts/generate-agents.mjs`
+### 5.1 Update `skills/swarm/SKILL.md`
 
-In the `generateAgentMd()` function, replace the "Team Coordination (openteams)" section:
+The `/swarm` skill now:
+1. Calls `openteams generate all` to produce role artifacts (unchanged)
+2. Calls `TeamCreate` to set up a native Claude Code team
+3. Spawns a **coordinator agent** (the root role) with `team_name`
+4. The coordinator manages everything: spawning companions/workers, creating tasks, coordinating via SendMessage
 
-**Remove:**
-```
-openteams message poll <team> --agent <role> --mark-delivered
-openteams message send <team> --to <agent> --content "..." --summary "..."
-```
+### 5.2 Update `scripts/generate-agents.mjs`
+
+In `determineTools()`: add `TaskList`, `TaskUpdate`, `SendMessage` for all agents; `TaskCreate` for root/companions. Remove `TodoWrite`.
+
+In `generateAgentMd()`: replace the "Team Coordination" section:
+
+**Remove all openteams CLI references:**
+- `openteams task list/update` — replaced by `TaskList`/`TaskUpdate`
+- `openteams template emit/events` — replaced by `SendMessage`
+- `openteams message send/poll` — replaced by `SendMessage`
+- MAP scope references — agents don't need to know about MAP
 
 **Replace with:**
-```
-## Team Coordination
+- `SendMessage` usage instructions with role-specific communication patterns from topology
+- `TaskList`/`TaskUpdate` for task management; `TaskCreate` for root/companions
+- Topology-derived routing patterns (from `manifest.communication.routing.peers`)
+- Signal emission/subscription mapped to SendMessage guidance
+- Optional MAP note: "lifecycle events emitted automatically, no interaction needed"
 
-You are part of the **<team>** team (MAP scope: swarm:<team>).
+### 5.3 Update `scripts/team-loader.sh`
 
-### Task management (openteams)
-openteams task list <team> --owner <role>
-openteams task update <team> <id> --status completed
+Replace openteams CLI instructions with native team references:
+- `TeamCreate` for team setup
+- `TaskCreate`/`TaskUpdate` for task lifecycle
+- `SendMessage` for agent-to-agent communication
 
-### Communication
-Messages from other team agents are automatically injected into your context
-at the start of each turn. Check for "[MAP]" sections in your context.
+Keep `roles.json` generation (still needed for MAP hook role matching).
 
-To coordinate with teammates, use the Agent tool to dispatch work to specific
-roles, or update task status via openteams CLI. MAP handles the real-time
-message delivery.
-```
+### 5.4 Update `scripts/bootstrap.sh`
 
-### 5.2 Update `scripts/team-loader.sh`
-
-Remove the `openteams message poll` reference from the output:
-
-Line 171: `echo "openteams message poll $TEAM_NAME --agent <role> --mark-delivered"`
-
-Replace with or remove — the team-loader output should reference MAP coordination instead.
-
-### 5.3 Write roles.json during /swarm launch
-
-Add to `team-loader.sh` or the `/swarm` skill flow: after generating artifacts, write `.generated/map/roles.json` for the hooks to use.
-
-```bash
-# After openteams generate all
-node -e "
-  const yaml = require('js-yaml');
-  const fs = require('fs');
-  const m = yaml.load(fs.readFileSync('$TEMPLATE_PATH/team.yaml', 'utf-8'));
-  const roles = {
-    team: m.name,
-    roles: m.roles || [],
-    root: m.topology?.root?.role || '',
-    companions: (m.topology?.companions || []).map(c => c.role)
-  };
-  fs.mkdirSync('.generated/map', { recursive: true });
-  fs.writeFileSync('.generated/map/roles.json', JSON.stringify(roles, null, 2));
-" 2>/dev/null
-```
+Minor text updates:
+- Remove "(openteams)" from header
+- Update `/swarm` description to mention native teams
 
 ---
 
 ## Phase 6: Polish
 
-### 6.1 Update `skills/swarm/SKILL.md`
-
-Add MAP status check to the launch flow. After step 5 (bootstrap the team):
-- Check MAP status
-- Report MAP scope and connected agents
-- Note that agents will receive MAP messages automatically
-
-### 6.2 Update `CLAUDE.md`
+### 6.1 Update `CLAUDE.md`
 
 Reflect new architecture:
-- openteams is structural (no messaging)
-- MAP handles runtime communication
-- sessionlog is independent
-- New scripts: bootstrap.sh, map-sidecar.mjs, map-hook.mjs
+- openteams is config/generation only (no runtime CLI usage)
+- Claude Code native teams handle all runtime coordination (TeamCreate, TaskCreate/TaskUpdate, SendMessage)
+- MAP handles external observability only
+- Coordinator agent pattern: `/swarm` → TeamCreate → spawn coordinator → coordinator manages team
 
 ### 6.3 Update `.claude-plugin/plugin.json`
 

@@ -116,7 +116,7 @@ fi
 
 # ── 5. Output context ────────────────────────────────────────────────────────
 
-echo "## Claude Code Swarm (openteams)"
+echo "## Claude Code Swarm"
 echo ""
 
 if [ -n "$TMPL" ]; then
@@ -138,5 +138,5 @@ if [ "$SESSIONLOG_ENABLED" = "true" ]; then
 fi
 
 echo ""
-echo "Use \`/swarm\` to launch the team, or \`/swarm <template>\` for a specific template."
+echo "Use \`/swarm\` to launch the team (creates a native Claude Code team)."
 echo "Built-in templates: **get-shit-done**, **bmad-method**"

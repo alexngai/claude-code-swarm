@@ -246,7 +246,7 @@ async function handleInject() {
 
   // Format as structured markdown
   const now = Date.now();
-  const output = [`## [MAP] ${messages.length} pending message${messages.length > 1 ? "s" : ""}`, ""];
+  const output = [`## [MAP] ${messages.length} external message${messages.length > 1 ? "s" : ""}`, ""];
 
   for (const msg of messages) {
     const from = msg.from || "unknown";

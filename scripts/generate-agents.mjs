@@ -169,7 +169,7 @@ if (TemplateLoader) {
       teamName: manifest.name,
       position: "spawned", // Can't determine without full parsing
       description: `${roleName} agent in the ${manifest.name} team`,
-      tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent"],
+      tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "TaskList", "TaskUpdate", "TaskCreate", "SendMessage"],
       skillContent: prompt
         ? `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.\n\n## Instructions\n\n${prompt}`
         : `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.`,
@@ -191,9 +191,12 @@ function determineTools(roleName, manifest, position) {
   // Base tools all agents get
   const tools = ["Read", "Glob", "Grep", "Bash"];
 
-  // Root and companions get full tool access + Agent spawning
+  // All team agents get native team coordination tools
+  tools.push("TaskList", "TaskUpdate", "SendMessage");
+
+  // Root and companions get full tool access + Agent spawning + task creation
   if (position === "root" || position === "companion") {
-    tools.push("Write", "Edit", "Agent", "TodoWrite");
+    tools.push("Write", "Edit", "Agent", "TaskCreate");
   }
 
   // Check spawn rules — if this role can spawn others, it needs Agent tool
@@ -249,54 +252,101 @@ function generateAgentMd({
   // Add team coordination instructions
   lines.push("## Team Coordination");
   lines.push("");
-  lines.push(
-    `You are part of the **${teamName}** team (MAP scope: \`swarm:${teamName}\`).`
-  );
+  lines.push(`You are part of the **${teamName}** team.`);
   lines.push("");
+
+  // Communication via SendMessage
   lines.push("### Communication");
   lines.push("");
+  lines.push("Use **SendMessage** to communicate with teammates:");
   lines.push(
-    "Messages from other team agents are automatically injected into your context"
+    '- `SendMessage(type="message", recipient="<agent-name>", content="...", summary="...")`'
   );
   lines.push(
-    'at the start of each turn. Check for **"[MAP]"** sections in your context'
-  );
-  lines.push("for pending messages from teammates.");
-  lines.push("");
-  lines.push(
-    "To coordinate with teammates, use the **Agent tool** to dispatch work to specific"
-  );
-  lines.push("roles, or update task status via the openteams CLI.");
-  lines.push("");
-  lines.push("### Task management (openteams)");
-  lines.push("");
-  lines.push("```bash");
-  lines.push(`# Check your tasks`);
-  lines.push(`openteams task list ${teamName} --owner ${roleName}`);
-  lines.push("");
-  lines.push(`# Claim and start a task`);
-  lines.push(
-    `openteams task update ${teamName} <id> --owner ${roleName} --status in_progress`
+    "- Only use broadcast when absolutely necessary (it messages every teammate)."
   );
   lines.push("");
-  lines.push(`# Complete a task`);
-  lines.push(`openteams task update ${teamName} <id> --status completed`);
-  lines.push("```");
 
-  if (manifest.communication?.channels) {
-    lines.push("");
-    lines.push("### Signals (openteams)");
-    lines.push("");
-    lines.push("```bash");
-    lines.push(`# Emit a signal`);
-    lines.push(
-      `openteams template emit ${teamName} -c <channel> -s <signal> --sender ${roleName}`
+  // Add role-specific communication patterns from topology routing
+  if (manifest.communication?.routing?.peers) {
+    const outbound = manifest.communication.routing.peers.filter(
+      (r) => r.from === roleName
     );
-    lines.push("");
-    lines.push(`# Check events visible to your role`);
-    lines.push(`openteams template events ${teamName} --role ${roleName}`);
-    lines.push("```");
+    const inbound = manifest.communication.routing.peers.filter(
+      (r) => r.to === roleName
+    );
+    if (outbound.length > 0 || inbound.length > 0) {
+      lines.push("#### Your communication patterns");
+      lines.push("");
+      for (const route of outbound) {
+        const signals = route.signals?.join(", ") || "updates";
+        lines.push(`- **Send** ${signals} to **${route.to}** via SendMessage`);
+      }
+      for (const route of inbound) {
+        const signals = route.signals?.join(", ") || "updates";
+        lines.push(`- **Receive** ${signals} from **${route.from}**`);
+      }
+      lines.push("");
+    }
   }
+
+  // Signals this role emits — now via SendMessage
+  if (manifest.communication?.emissions?.[roleName]) {
+    const emissions = manifest.communication.emissions[roleName];
+    lines.push("#### Signals you emit");
+    lines.push("");
+    lines.push(
+      "When these events occur, notify the relevant agents via SendMessage:"
+    );
+    for (const signal of emissions) {
+      lines.push(`- **${signal}**`);
+    }
+    lines.push("");
+  }
+
+  // Signals this role subscribes to
+  if (manifest.communication?.subscriptions?.[roleName]) {
+    const subs = manifest.communication.subscriptions[roleName];
+    lines.push("#### Signals you receive");
+    lines.push("");
+    lines.push("Watch for messages from teammates about:");
+    for (const sub of subs) {
+      const signals = sub.signals ? sub.signals.join(", ") : "all events";
+      lines.push(`- Channel **${sub.channel}**: ${signals}`);
+    }
+    lines.push("");
+  }
+
+  // Task management via native tools
+  lines.push("### Task Management");
+  lines.push("");
+  lines.push("Use Claude Code's native task tools:");
+  lines.push(
+    "- **TaskList** — check available tasks and their status"
+  );
+  lines.push(
+    "- **TaskUpdate** — claim tasks (set owner to your name), update status to in_progress or completed"
+  );
+  if (position === "root" || position === "companion") {
+    lines.push(
+      "- **TaskCreate** — create new tasks for the team when you identify additional work"
+    );
+  }
+  lines.push("");
+  lines.push(
+    "After completing a task, mark it completed with TaskUpdate, then check TaskList for your next assignment."
+  );
+  lines.push("");
+
+  // Optional MAP note
+  lines.push("### External Observability (MAP)");
+  lines.push("");
+  lines.push(
+    "If MAP is enabled, lifecycle events are automatically emitted for external dashboards."
+  );
+  lines.push(
+    "You do not need to interact with MAP directly — it is handled by hooks."
+  );
 
   return lines.join("\n") + "\n";
 }

@@ -1,13 +1,13 @@
 ---
 name: swarm
-description: Launch an agent team from an openteams topology template. Lists available templates, generates agent definitions, and orchestrates team creation.
+description: Launch an agent team from an openteams topology template. Creates a native Claude Code team and spawns a coordinator agent.
 user_invocable: true
 argument: optional
 ---
 
 # /swarm — Launch a Team Topology
 
-You are the **swarm launcher** for the claude-code-swarm plugin. Your job is to help the user launch a coordinated agent team from an openteams YAML topology template.
+You are the **swarm launcher** for the claude-code-swarm plugin. Your job is to help the user launch a coordinated agent team from an openteams YAML topology template using Claude Code's native team features.
 
 ## What to do
 
@@ -56,65 +56,83 @@ mkdir -p .generated
 openteams generate all "$TEMPLATE_PATH" -o .generated
 ```
 
-### Step 5: Bootstrap the team in openteams
-
-Initialize the team's shared state (tasks, messages, signals):
-
-```bash
-openteams template load "$TEMPLATE_PATH"
-```
-
-### Step 6: Read the generated artifacts
+### Step 5: Read the generated artifacts
 
 1. Read `.generated/SKILL.md` — the team catalog overview
-2. Read `.generated/team.yaml` — the topology manifest
+2. Read `.generated/team.yaml` — the topology manifest (extract team `name`, `description`, `topology.root.role`, `topology.companions`, `spawn_rules`, and `communication` sections)
 3. Read `.generated/roles/<root-role>/SKILL.md` — the root agent's full context
 
-### Step 7: Launch the agent team
+### Step 6: Create the native team
 
-Based on the topology:
+Extract the team name and description from the topology manifest, then create the Claude Code team:
 
-1. **Root agent**: The team lead. Spawn using the Agent tool with the root role's SKILL.md content as the prompt. The root agent orchestrates the team.
+```
+TeamCreate(
+  team_name="<team-name-from-yaml>",
+  description="<team-description-from-yaml>"
+)
+```
 
-2. **Companion agents**: Always-on agents that assist the root. Spawn them in parallel using the Agent tool, each with their role's SKILL.md content.
+### Step 7: Spawn the coordinator agent
 
-3. **Spawned agents**: Created on-demand by root/companions according to spawn_rules. Don't spawn these upfront — the root agent will spawn them as needed.
+Build a coordinator prompt and spawn the root agent as a team member. The coordinator prompt should combine:
 
-When building each agent's prompt, combine:
-- The role's generated SKILL.md content (from `.generated/roles/<role>/SKILL.md`)
-- The team name for openteams CLI coordination
-- A reminder to use `openteams` CLI for task/message/signal operations
+1. **The root role's SKILL.md content** — their specialized instructions
+2. **Coordinator setup instructions** — telling the agent to:
+   - Spawn companion agents (with `team_name`) by reading their SKILL.md from `.generated/roles/<role>/SKILL.md`
+   - Create tasks via `TaskCreate` based on the user's goal
+   - Spawn additional agents on-demand per `spawn_rules` (always with `team_name`)
+   - Coordinate via `SendMessage` and track progress via `TaskList`/`TaskUpdate`
+3. **Topology summary** — the roles, spawn_rules, and communication patterns from the manifest
+4. **The user's original goal/request**
+
+Spawn the coordinator:
+
+```
+Agent(
+  name="<root-role-name>",
+  team_name="<team-name>",
+  prompt="<coordinator prompt assembled above>"
+)
+```
+
+**Stop here.** The coordinator handles everything from this point — spawning companions, creating tasks, spawning workers, and managing the workflow.
 
 ### Example: Launching get-shit-done
 
 ```
-# The topology has root=orchestrator, companions=[roadmapper, verifier]
-# Read their role definitions
+# Read the topology and root role definition
+Read .generated/team.yaml
 Read .generated/roles/orchestrator/SKILL.md
-Read .generated/roles/roadmapper/SKILL.md
-Read .generated/roles/verifier/SKILL.md
 
-# Spawn the orchestrator (root) — this agent will manage the whole team
-Agent(
-  name="orchestrator",
-  subagent_type="general-purpose",
-  prompt="<contents of orchestrator SKILL.md>"
+# Create the native Claude Code team
+TeamCreate(
+  team_name="get-shit-done",
+  description="Wave-based parallel execution with goal-backward verification"
 )
 
-# Spawn companions in parallel
-Agent(name="roadmapper", prompt="<contents of roadmapper SKILL.md>")
-Agent(name="verifier", prompt="<contents of verifier SKILL.md>")
+# Spawn the coordinator (root agent) as a team member
+Agent(
+  name="orchestrator",
+  team_name="get-shit-done",
+  prompt="<orchestrator SKILL.md + coordinator instructions + topology summary + user goal>"
+)
 
-# The orchestrator will spawn planners, executors, researchers etc. as needed
+# The orchestrator will:
+# - Spawn roadmapper, verifier as companions (with team_name="get-shit-done")
+# - Create tasks via TaskCreate for the user's goal
+# - Spawn planners, executors, researchers on-demand (with team_name)
+# - Coordinate via SendMessage, track via TaskList/TaskUpdate
 ```
 
 ## Important Notes
 
-- **Always read** a role's `.generated/roles/<role>/SKILL.md` before spawning — it contains specialized prompts, communication config, and CLI references
-- **Use openteams CLI** for task management: `openteams task list`, `openteams task update`
-- **Respect spawn_rules** — only spawn roles that the current agent is permitted to spawn
-- **Communication channels** define information flow — agents emit signals and subscribe to channels as defined in the topology
-- The generated SKILL.md files include CLI quick-reference sections tailored to each role
+- **Always read** a role's `.generated/roles/<role>/SKILL.md` before including it in the coordinator prompt or spawning an agent
+- **openteams is config-only** — used for `openteams generate all` to produce role artifacts, NOT for runtime task/message/signal management
+- **Use Claude Code native teams** for all runtime coordination: `TeamCreate`, `TaskCreate`, `TaskUpdate`, `SendMessage`
+- **Respect spawn_rules** from the topology — only spawn roles that the current agent is permitted to spawn
+- **Communication patterns** from the topology define information flow — embed them in agent prompts as SendMessage guidance
+- All agents must be spawned with `team_name` so they share the team's task list and can message each other
 
 ## Integrations
 
@@ -123,8 +141,10 @@ Agent(name="verifier", prompt="<contents of verifier SKILL.md>")
 If MAP is enabled in `.claude-swarm.json`, a sidecar process connects to the MAP server and:
 - **Registers team agents** as they are spawned (matching topology roles)
 - **Emits lifecycle events** (agent spawned/completed, task dispatched/completed, turn start/end)
-- **Injects incoming messages** into agent context at the start of each turn (look for `[MAP]` sections)
+- **Injects external messages** into agent context at the start of each turn (look for `[MAP]` sections — these are from external systems, not teammates)
 - **Provides observability** — dashboards can subscribe to events via the MAP server or federation
+
+Agents do not interact with MAP directly — it is handled automatically by hooks.
 
 ### Sessionlog
 

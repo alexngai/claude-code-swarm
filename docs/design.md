@@ -8,12 +8,14 @@ Design document for integrating MAP (Multi-Agent Protocol) and sessionlog into t
 
 ### Key decisions made
 
-- **openteams** is structural only — team topology, roles, spawn rules. Its messaging layer (`openteams message send/poll`) is dropped in favor of MAP.
-- **MAP** handles all runtime communication — observability events, agent coordination, and (v2) inter-agent messaging.
+- **openteams** is config/generation only — team topology definitions, role prompts, artifact generation via `openteams generate all`. No runtime task, messaging, or signal CLI usage.
+- **Claude Code native teams** handle all runtime coordination — `TeamCreate` for team setup, `TaskCreate`/`TaskUpdate` for task lifecycle, `SendMessage` for agent-to-agent communication.
+- **MAP** handles external observability only — lifecycle events (agent spawned/completed, task dispatched/completed, turn events) and external message injection. Not used for internal team coordination.
 - **sessionlog** is fully independent — the swarm plugin checks its status but does not manage its lifecycle.
 - **Sidecar mode is configurable** — session-scoped (starts/stops with the session) or persistent (user manages externally).
 - **MAP server** is user-provisioned — the plugin connects, doesn't start a server.
 - **MAP scope** is per swarm team — all agents in a team share one scope.
+- **Coordinator pattern** — `/swarm` calls `TeamCreate` and spawns a coordinator agent (the root role) with `team_name`. The coordinator manages team setup, task creation, and agent spawning.
 
 ---
 
@@ -32,7 +34,7 @@ scripts/generate-agents.mjs ← openteams templates → AGENT.md files
 templates/                  ← bundled team topologies (get-shit-done, bmad-method)
 ```
 
-**Coordination today:** Agents coordinate via the openteams CLI (`openteams task`, `openteams message send/poll`, `openteams template emit`). Each generated AGENT.md includes a CLI quick-reference section. Coordination is text-based — agents include CLI commands in their Bash tool calls.
+**Coordination today:** Agents coordinate via Claude Code's native team features (`TeamCreate`, `TaskCreate`/`TaskUpdate`, `SendMessage`). Each generated AGENT.md includes native team tool instructions. openteams is used only for topology configuration and artifact generation (`openteams generate all`).
 
 ### What we want to add
 
@@ -43,21 +45,23 @@ Both are opt-in via `.claude-swarm.json` configuration.
 
 ### What changes about openteams
 
-openteams retains its role as the **structural layer** — team topology definitions, role specifications, spawn rules, and signal/channel schemas. Its runtime messaging (`openteams message send/poll`) is superseded by MAP, which provides:
-- Push delivery instead of polling
-- Real-time observability via event subscriptions
-- Cross-turn message injection via hooks
-- Structured addressing (by agent, role, scope, hierarchy)
+openteams is now **config/generation only** — team topology definitions, role specifications, spawn rules, signal/channel schemas, and artifact generation. All runtime coordination is handled by Claude Code's native team features:
 
-openteams CLI commands retained:
-- `openteams template load` — initialize team state
-- `openteams generate all` — generate role artifacts
-- `openteams task list/create/update` — task lifecycle
-- `openteams template emit/events` — signal emission (maps to MAP events)
+- **TeamCreate** — sets up the team with shared task list
+- **TaskCreate/TaskUpdate/TaskList** — task lifecycle (replaces `openteams task` CLI)
+- **SendMessage** — agent-to-agent communication (replaces `openteams message` CLI and signal emission)
+- **Agent tool with `team_name`** — spawns agents as team members
 
-openteams CLI commands dropped:
-- `openteams message send` — replaced by MAP `agent.send()`
-- `openteams message poll` — replaced by MAP sidecar inbox + hook injection
+openteams CLI command retained:
+- `openteams generate all` — generate role artifacts (SKILL.md per role)
+
+openteams CLI commands dropped (replaced by Claude Code native teams):
+- `openteams template load` — no longer needed (no runtime state to initialize)
+- `openteams task list/create/update` — replaced by `TaskCreate`/`TaskUpdate`/`TaskList`
+- `openteams template emit/events` — replaced by `SendMessage`
+- `openteams message send/poll` — replaced by `SendMessage`
+
+MAP remains for **external observability** — lifecycle events for dashboards, external message injection from non-Claude-Code systems.
 
 ---
 
@@ -190,17 +194,16 @@ sessionlog installs its own Claude Code hooks programmatically into `.claude/set
 
 And 4 git hooks: `prepare-commit-msg`, `commit-msg`, `post-commit`, `pre-push`.
 
-### 2.3 openteams (structural layer only)
+### 2.3 openteams (config/generation only)
 
 **Package:** `openteams` (npm)
 
-openteams provides the team definition layer:
+openteams provides the team definition and generation layer:
 - **Templates** — YAML topology definitions with roles, spawn rules, communication channels
-- **Task management** — `openteams task list/create/update` (retained for structured task lifecycle)
-- **Signal definitions** — channel/signal schemas from `team.yaml` (emitted as MAP events)
-- **Code generation** — `openteams generate all` produces role artifacts
+- **Signal definitions** — channel/signal schemas from `team.yaml` (embedded in agent prompts as SendMessage guidance)
+- **Code generation** — `openteams generate all` produces role artifacts (SKILL.md per role)
 
-**Not used at runtime:** `openteams message send/poll` (replaced by MAP).
+**Not used at runtime:** All openteams CLI commands except `openteams generate all` are superseded by Claude Code native teams (`TeamCreate`, `TaskCreate`/`TaskUpdate`, `SendMessage`).
 
 ---
 
@@ -1035,7 +1038,7 @@ This is especially useful for:
 
 ### ~~9.5 openteams task events vs MAP task events~~ (RESOLVED)
 
-**Decision:** MAP task events map to whatever task system is in play. The primary source is Claude Code native task events (agent spawning via the `Agent` tool). openteams task CLI (`openteams task create/update`) is not monitored for MAP events — it's an internal coordination mechanism. MAP provides the observability layer; openteams provides the structural definitions.
+**Decision:** MAP task events map to Claude Code native task lifecycle. The primary source is Claude Code agent spawning via the `Agent` tool (with `team_name`), and task management via `TaskCreate`/`TaskUpdate`. openteams is not used at runtime — it provides structural definitions only. MAP provides the external observability layer.
 
 ### ~~9.6 Federation configuration ownership~~ (RESOLVED)
 
