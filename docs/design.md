@@ -11,7 +11,7 @@ Design document for integrating MAP (Multi-Agent Protocol) and sessionlog into t
 - **openteams** is config/generation only — team topology definitions, role prompts, artifact generation via `openteams generate all`. No runtime task, messaging, or signal CLI usage.
 - **Claude Code native teams** handle all runtime coordination — `TeamCreate` for team setup, `TaskCreate`/`TaskUpdate` for task lifecycle, `SendMessage` for agent-to-agent communication.
 - **MAP** handles external observability only — lifecycle events (agent spawned/completed, task dispatched/completed, turn events) and external message injection. Not used for internal team coordination.
-- **sessionlog** is fully independent — the swarm plugin checks its status but does not manage its lifecycle.
+- **sessionlog** is fully independent — the swarm plugin checks its status but does not manage its lifecycle. An optional bridge (`sessionlog.sync`) forwards session state to MAP for external observability.
 - **Sidecar mode is configurable** — session-scoped (starts/stops with the session) or persistent (user manages externally).
 - **MAP server** is user-provisioned — the plugin connects, doesn't start a server.
 - **MAP scope** is per swarm team — all agents in a team share one scope.
@@ -465,6 +465,81 @@ SessionStart hook output:
 ```bash
 npm install -g sessionlog
 sessionlog enable --agent claude-code
+```
+
+### 3.7 Sessionlog → MAP Bridge (Trajectory Protocol)
+
+When both MAP and sessionlog are active, the swarm plugin bridges sessionlog's rich session data into MAP using the **Trajectory Protocol** (`trajectory/checkpoint`). This gives persistent, queryable checkpoint storage — external dashboards can discover past checkpoints via `trajectory/list` and `trajectory/get` without needing to be subscribed at emit time.
+
+**Configuration** via `.claude-swarm.json`:
+```json
+{
+  "sessionlog": {
+    "enabled": true,
+    "sync": "full"
+  }
+}
+```
+
+**Sync levels** (`sessionlog.sync`) — controls what goes into `TrajectoryCheckpoint.metadata`:
+| Level | Checkpoint metadata |
+|-------|--------------|
+| `"off"` | No bridge (default) |
+| `"lifecycle"` | phase, turnId, startedAt, endedAt |
+| `"metrics"` | Above + tokenUsage, filesTouched, stepCount, checkpointIDs |
+| `"full"` | Complete SessionState snapshot |
+
+**Sessionlog → TrajectoryCheckpoint mapping:**
+| Checkpoint field | Source |
+|---|---|
+| `id` | `lastCheckpointID` or `${sessionID}-step${stepCount}` |
+| `agentId` | `${teamName}-sidecar` |
+| `sessionId` | `sessionID` |
+| `label` | `"Turn {turnID} (step {stepCount}, {phase})"` |
+| `metadata` | Sync-level-filtered sessionlog fields |
+
+**How it works:**
+1. sessionlog's own hooks write session state to `.git/sessionlog-sessions/<id>.json`
+2. On every `Stop` hook (end of turn), `map-hook.mjs sessionlog-sync` reads the active session file
+3. The state is mapped into a `TrajectoryCheckpoint` (id, agentId, sessionId, label, metadata)
+4. The checkpoint is sent to the sidecar via `{ action: "trajectory-checkpoint", checkpoint }`
+5. The sidecar calls `connection.callExtension("trajectory/checkpoint", { checkpoint })`
+6. On success: checkpoint is stored on the MAP server, queryable via `trajectory/list`/`trajectory/get`
+7. On failure (server doesn't support trajectory): falls back to `connection.send()` with a `swarm.sessionlog.sync` broadcast event
+8. The checkpoint is cached at `.generated/map/sessionlog-state.json`
+9. An initial sync fires during `SessionStart` (bootstrap.sh)
+
+**Fallback strategy:**
+1. **Sidecar + trajectory support** → `trajectory/checkpoint` → persistent queryable storage
+2. **Sidecar + no trajectory** → `callExtension` throws → fallback to `swarm.sessionlog.sync` broadcast
+3. **No sidecar** → `fireAndForgetTrajectory()` creates temp connection, tries trajectory, falls back to broadcast
+4. **MAP server unreachable** → silently dropped (never blocks the agent)
+
+**Key design choices:**
+- **No sessionlog dependency** — the bridge reads `.git/sessionlog-sessions/*.json` directly via `fs.readFileSync`. No `sessionlog` npm import.
+- **Guard conditions** — the Stop hook guard checks both `map.enabled` AND `sessionlog.sync !== 'off'` before running
+- **No-op when sessionlog is absent** — if the session directory doesn't exist or has no active sessions, the handler returns silently
+- **Global SDK** — uses `@multi-agent-protocol/sdk` npm package, installed automatically by bootstrap.sh when MAP is enabled
+
+**Data flow:**
+```
+sessionlog hooks → .git/sessionlog-sessions/<id>.json
+                        │
+Stop hook fires         │
+    │                   ▼
+map-hook.mjs sessionlog-sync
+    ├── findActiveSession() → SessionState
+    ├── buildTrajectoryCheckpoint(state, syncLevel, config)
+    │   └── { id, agentId, sessionId, label, metadata: { ... } }
+    ├── sendToSidecar({ action: "trajectory-checkpoint", checkpoint })
+    │       │
+    │       ▼  (sidecar)
+    │   connection.callExtension("trajectory/checkpoint", { checkpoint })
+    │       │
+    │       ├── success → stored as queryable checkpoint on MAP server
+    │       └── error → fallback: connection.send() with swarm.sessionlog.sync
+    │
+    └── Cache → .generated/map/sessionlog-state.json
 ```
 
 ---

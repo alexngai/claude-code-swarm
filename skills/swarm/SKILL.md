@@ -36,24 +36,29 @@ Otherwise, discover available templates by listing `$PLUGIN_DIR/templates/*/team
 
 Users can also provide a path to any openteams template directory.
 
-### Step 3: Ensure openteams is installed
+### Step 3: Install dependencies
 
 ```bash
-command -v openteams || npm install -g openteams
+# Ensure plugin dependencies are installed (openteams, js-yaml)
+if [ ! -d "$PLUGIN_DIR/node_modules" ]; then
+  (cd "$PLUGIN_DIR" && npm install --production)
+fi
 ```
 
 ### Step 4: Resolve and generate
 
-Once you have the template name (e.g. `get-shit-done`), resolve the template path and generate artifacts:
+Once you have the template name (e.g. `get-shit-done`), use the team-loader script:
 
 ```bash
-# Resolve template path
-TEMPLATE_PATH="$PLUGIN_DIR/templates/<template-name>"
-# Or if the user gave an absolute/relative path, use it directly
+node "$PLUGIN_DIR/scripts/team-loader.mjs" "<template-name>"
+```
 
-# Generate the team package
+Or manually:
+
+```bash
+TEMPLATE_PATH="$PLUGIN_DIR/templates/<template-name>"
 mkdir -p .generated
-openteams generate all "$TEMPLATE_PATH" -o .generated
+"$PLUGIN_DIR/node_modules/.bin/openteams" generate all "$TEMPLATE_PATH" -o .generated
 ```
 
 ### Step 5: Read the generated artifacts

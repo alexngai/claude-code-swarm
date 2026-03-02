@@ -1,0 +1,43 @@
+{
+  "name": "claude-code-swarm",
+  "version": "0.3.0",
+  "description": "Claude Code plugin for launching agent teams from openteams topologies with MAP observability",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.mjs",
+    "./config": "./src/config.mjs",
+    "./roles": "./src/roles.mjs",
+    "./template": "./src/template.mjs",
+    "./agent-generator": "./src/agent-generator.mjs"
+  },
+  "bin": {
+    "swarm-bootstrap": "./scripts/bootstrap.mjs",
+    "swarm-sidecar": "./scripts/map-sidecar.mjs",
+    "swarm-hook": "./scripts/map-hook.mjs",
+    "swarm-load-team": "./scripts/team-loader.mjs",
+    "swarm-generate-agents": "./scripts/generate-agents.mjs"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "openteams": "^0.1.2"
+  },
+  "peerDependencies": {
+    "@multi-agent-protocol/sdk": "^0.1.1"
+  },
+  "peerDependenciesMeta": {
+    "@multi-agent-protocol/sdk": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
+  }
+}
