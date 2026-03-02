@@ -44,18 +44,18 @@ export { sendToSidecar, isSidecarAlive, startSidecar, killSidecar, ensureSidecar
 // Sidecar server
 export { createSocketServer, createCommandHandler, respond } from "./sidecar-server.mjs";
 
-// MAP events
+// MAP events — sidecar commands and message payloads (no custom swarm.* types)
 export {
-  emitEvent,
-  buildSpawnEvent,
-  buildCompletedEvent,
-  buildTaskDispatchedEvent,
-  buildTaskCompletedEvent,
-  buildTurnCompletedEvent,
-  buildSubagentStartEvent,
-  buildSubagentStopEvent,
-  buildTeammateIdleEvent,
-  buildTaskStatusCompletedEvent,
+  sendCommand,
+  emitPayload,
+  buildSpawnCommand,
+  buildDoneCommand,
+  buildSubagentSpawnCommand,
+  buildSubagentDoneCommand,
+  buildStateCommand,
+  buildTaskDispatchedPayload,
+  buildTaskCompletedPayload,
+  buildTaskStatusPayload,
 } from "./map-events.mjs";
 
 // Sessionlog

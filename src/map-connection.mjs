@@ -98,16 +98,18 @@ export async function fireAndForgetTrajectory(config, checkpoint) {
     try {
       await agent.callExtension("trajectory/checkpoint", { checkpoint });
     } catch {
-      // Server doesn't support trajectory — fall back to broadcast
+      // Server doesn't support trajectory — fall back to broadcast as message
       await agent.send(
         { scope },
         {
-          type: "swarm.sessionlog.sync",
-          ...checkpoint.metadata,
-          checkpointId: checkpoint.id,
-          agentId: checkpoint.agentId,
-          sessionId: checkpoint.sessionId,
-          label: checkpoint.label,
+          type: "trajectory.checkpoint",
+          checkpoint: {
+            id: checkpoint.id,
+            agentId: checkpoint.agentId,
+            sessionId: checkpoint.sessionId,
+            label: checkpoint.label,
+            metadata: checkpoint.metadata,
+          },
         }
       );
     }

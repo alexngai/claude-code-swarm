@@ -100,7 +100,7 @@ MAP options:
 }
 ```
 
-When both MAP and sessionlog are active, the plugin bridges sessionlog's session data into MAP using the **Trajectory Protocol** (`trajectory/checkpoint`). Each sync emits a queryable `TrajectoryCheckpoint` with structured metadata. If the MAP server doesn't support the trajectory protocol, the bridge falls back to broadcasting `swarm.sessionlog.sync` events. Sync levels control what goes into checkpoint metadata:
+When both MAP and sessionlog are active, the plugin bridges sessionlog's session data into MAP using the **Trajectory Protocol** (`trajectory/checkpoint`). Each sync emits a queryable `TrajectoryCheckpoint` with structured metadata. If the MAP server doesn't support the trajectory protocol, the bridge falls back to sending a `trajectory.checkpoint` message payload. Sync levels control what goes into checkpoint metadata:
 - `"off"` — no bridge (default)
 - `"lifecycle"` — session/turn identifiers and phase only
 - `"metrics"` — above + token usage, files touched, step count, checkpoint IDs
@@ -138,11 +138,21 @@ openteams is used **only for configuration** — topology definitions, role prom
 
 ### MAP hooks (external observability)
 
+All hooks use MAP SDK primitives — no custom `swarm.*` event types. Clients subscribe to standard MAP events only:
+- `agent_registered` / `agent_unregistered` / `agent_state_changed` for agent lifecycle
+- `message_sent` for task lifecycle (typed payloads like `{ type: "task.dispatched", ... }`)
+- `trajectory.checkpoint` for sessionlog sync
+
+Hook dispatch:
 1. **UserPromptSubmit** → `map-hook.mjs inject`: reads MAP inbox, injects external messages into context
-2. **PreToolUse(Task)** → `map-hook.mjs agent-spawning`: registers team agents in MAP, emits spawn events
-3. **PostToolUse(Task)** → `map-hook.mjs agent-completed`: unregisters agents, emits completion events
-4. **Stop** → `map-hook.mjs turn-completed`: updates sidecar state, emits turn events
-5. **Stop** → `map-hook.mjs sessionlog-sync`: reads sessionlog state, reports `trajectory/checkpoint` to MAP (falls back to `swarm.sessionlog.sync` broadcast if server doesn't support trajectory)
+2. **PreToolUse(Task)** → `map-hook.mjs agent-spawning`: spawns agent via `conn.spawn()` (server auto-emits `agent_registered`), sends `task.dispatched` message
+3. **PostToolUse(Task)** → `map-hook.mjs agent-completed`: marks agent done via `conn.callExtension("map/agents/unregister")` (server auto-emits `agent_unregistered`), sends `task.completed` message
+4. **Stop** → `map-hook.mjs turn-completed`: updates sidecar state via `conn.updateState("idle")` (server auto-emits `agent_state_changed`)
+5. **Stop** → `map-hook.mjs sessionlog-sync`: reads sessionlog state, reports `trajectory/checkpoint` to MAP (falls back to `trajectory.checkpoint` message payload if server doesn't support trajectory)
+6. **SubagentStart** → `map-hook.mjs subagent-start`: spawns subagent via `conn.spawn()` with `role: "subagent"`
+7. **SubagentStop** → `map-hook.mjs subagent-stop`: marks subagent done
+8. **TeammateIdle** → `map-hook.mjs teammate-idle`: updates teammate state to idle
+9. **TaskCompleted** → `map-hook.mjs task-completed`: sends `task.completed` message
 
 ### MAP sidecar
 
@@ -150,15 +160,16 @@ The sidecar (`scripts/map-sidecar.mjs`) is a persistent Node.js process that:
 - Connects to the MAP server via WebSocket with auto-reconnection
 - Listens on a UNIX socket (`.generated/map/sidecar.sock`) for commands from hooks
 - Writes incoming external MAP messages to `.generated/map/inbox.jsonl`
-- Manages team agent registrations (register/unregister on spawn/complete)
-- Reports trajectory checkpoints via `trajectory/checkpoint` (with broadcast fallback)
+- Manages agent lifecycle via SDK primitives: `conn.spawn()` for registration, `conn.callExtension("map/agents/unregister")` for deregistration, `conn.updateState()` for state changes
+- Sends task lifecycle as typed message payloads via `conn.send()`
+- Reports trajectory checkpoints via `trajectory/checkpoint` (with `trajectory.checkpoint` message fallback)
 - Self-terminates after 30 minutes of inactivity (session mode)
 
 The hook helper (`scripts/map-hook.mjs`) includes best-effort auto-recovery: if the sidecar is down, it attempts to restart it, with a fire-and-forget direct WebSocket fallback if recovery fails.
 
 ### Agent registration
 
-Only topology-defined roles (from `team.yaml`) get MAP agent registrations. Internal subagents spawned by the Agent tool do not. Role matching is done via `.generated/map/roles.json` written during team loading.
+Only topology-defined roles (from `team.yaml`) get full MAP agent registrations via `conn.spawn()`. Subagents are also spawned in MAP with `role: "subagent"` for observability. Role matching is done via `.generated/map/roles.json` written during team loading. All agent context (role, template, agentType, isTeamRole) goes into agent `metadata`.
 
 ### Module architecture
 
@@ -172,7 +183,7 @@ src/inbox.mjs            ← readInbox(), clearInbox(), formatInboxAsMarkdown()
 src/map-connection.mjs   ← connectToMAP(), fireAndForget(), fireAndForgetTrajectory()
 src/sidecar-client.mjs   ← sendToSidecar(), ensureSidecar(), startSidecar()
 src/sidecar-server.mjs   ← createSocketServer(), createCommandHandler()
-src/map-events.mjs       ← emitEvent(), build*Event()
+src/map-events.mjs       ← sendCommand(), emitPayload(), build*Command(), build*Payload()
 src/sessionlog.mjs       ← findActiveSession(), buildTrajectoryCheckpoint(), syncSessionlog()
 src/template.mjs         ← resolveTemplatePath(), generateTeamArtifacts()
 src/agent-generator.mjs  ← generateAllAgents(), generateAgentMd()

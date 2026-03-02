@@ -1,162 +1,175 @@
 /**
- * map-events.mjs — Event builders and emission for claude-code-swarm
+ * map-events.mjs — Sidecar command builders and message payload builders
  *
- * Constructs structured MAP event payloads and handles the
- * sidecar → recovery → fire-and-forget emission chain.
+ * Produces two kinds of objects:
+ * 1. Sidecar commands — { action: "spawn"|"done"|"state", ... }
+ *    These use MAP SDK primitives (conn.spawn, conn.done, conn.updateState).
+ *    The server auto-emits agent_registered, agent_state_changed, etc.
+ *
+ * 2. Message payloads — { type: "task.dispatched"|"task.completed", ... }
+ *    These are sent via conn.send() as regular MAP messages.
+ *    Observers see standard message_sent events.
+ *
+ * No custom swarm.* event types.
  */
 
 import { sendToSidecar, ensureSidecar } from "./sidecar-client.mjs";
 import { fireAndForget } from "./map-connection.mjs";
 
+// ── Sidecar command emission ──────────────────────────────────────────────────
+
 /**
- * Emit a MAP event: try sidecar, fall back to fire-and-forget.
+ * Send a sidecar command: try sidecar, fall back to fire-and-forget.
+ * For "spawn" and "done" commands, the fire-and-forget path can't use SDK
+ * primitives (ephemeral connection), so they are silently dropped.
  */
-export async function emitEvent(config, event, meta) {
-  const sent = await sendToSidecar({ action: "emit", event, meta });
+export async function sendCommand(config, command) {
+  const sent = await sendToSidecar(command);
   if (!sent) {
     const recovered = await ensureSidecar(config);
     if (recovered) {
-      await sendToSidecar({ action: "emit", event, meta });
-    } else {
-      await fireAndForget(config, event);
+      await sendToSidecar(command);
+    } else if (command.action === "emit") {
+      // Only message payloads can be fire-and-forget sent
+      await fireAndForget(config, command.event);
     }
+    // spawn/done/state commands require the sidecar — silently drop if unavailable
   }
 }
 
 /**
- * Build a swarm.agent.spawned event.
+ * Emit a message payload to the MAP scope via the sidecar.
  */
-export function buildSpawnEvent(agentName, matchedRole, teamName, hookData) {
+export async function emitPayload(config, payload, meta) {
+  await sendCommand(config, { action: "emit", event: payload, meta });
+}
+
+// ── Agent lifecycle commands (SDK primitives via sidecar) ─────────────────────
+
+/**
+ * Build a "spawn" sidecar command for a team agent.
+ * Sidecar calls conn.spawn() → server auto-emits agent_registered.
+ */
+export function buildSpawnCommand(agentName, matchedRole, teamName, hookData) {
   const prompt =
     hookData.tool_input?.prompt || hookData.tool_input?.description || "";
   return {
-    type: "swarm.agent.spawned",
-    agent: agentName,
-    role: matchedRole || "internal",
-    parent: `${teamName}-sidecar`,
-    isTeamRole: !!matchedRole,
-    task: prompt.substring(0, 300),
+    action: "spawn",
+    agent: {
+      agentId: matchedRole ? `${teamName}-${matchedRole}` : agentName,
+      name: matchedRole || agentName,
+      role: matchedRole || "internal",
+      scopes: [`swarm:${teamName}`],
+      metadata: {
+        template: teamName,
+        isTeamRole: !!matchedRole,
+        task: prompt.substring(0, 300),
+      },
+    },
   };
 }
 
 /**
- * Build a swarm.agent.completed event.
+ * Build a "done" sidecar command for a team agent.
+ * Sidecar unregisters the agent → server auto-emits agent_unregistered.
  */
-export function buildCompletedEvent(agentName, matchedRole, teamName) {
+export function buildDoneCommand(agentName, matchedRole, teamName) {
   return {
-    type: "swarm.agent.completed",
-    agent: agentName,
-    role: matchedRole || "internal",
-    parent: `${teamName}-sidecar`,
-    isTeamRole: !!matchedRole,
-    status: "completed",
+    action: "done",
+    agentId: matchedRole ? `${teamName}-${matchedRole}` : agentName,
+    reason: "completed",
   };
 }
 
 /**
- * Build a swarm.task.dispatched event.
+ * Build a "spawn" sidecar command for a subagent.
  */
-export function buildTaskDispatchedEvent(
-  hookData,
-  teamName,
-  matchedRole,
-  agentName
-) {
+export function buildSubagentSpawnCommand(hookData, teamName) {
+  return {
+    action: "spawn",
+    agent: {
+      agentId: hookData.agent_id || `${teamName}-subagent-${Date.now()}`,
+      name: hookData.agent_type || "subagent",
+      role: "subagent",
+      scopes: [`swarm:${teamName}`],
+      metadata: {
+        agentType: hookData.agent_type || "",
+        sessionId: hookData.session_id || "",
+        isTeamRole: false,
+      },
+    },
+  };
+}
+
+/**
+ * Build a "done" sidecar command for a subagent.
+ */
+export function buildSubagentDoneCommand(hookData, teamName) {
+  return {
+    action: "done",
+    agentId: hookData.agent_id || "",
+    reason: (hookData.last_assistant_message || "").substring(0, 500) || "completed",
+  };
+}
+
+// ── State update commands ─────────────────────────────────────────────────────
+
+/**
+ * Build a "state" sidecar command.
+ * For turn completion: updates the sidecar agent's state to idle + metadata.
+ * For teammate idle: updates a specific child agent's state.
+ */
+export function buildStateCommand(agentId, state, metadata) {
+  const cmd = { action: "state", state };
+  if (agentId) cmd.agentId = agentId;
+  if (metadata) cmd.metadata = metadata;
+  return cmd;
+}
+
+// ── Task lifecycle payloads (sent as MAP messages) ────────────────────────────
+
+/**
+ * Build a task.dispatched message payload.
+ * Sent via conn.send() → observers see message_sent event.
+ */
+export function buildTaskDispatchedPayload(hookData, teamName, matchedRole, agentName) {
   const prompt =
     hookData.tool_input?.prompt || hookData.tool_input?.description || "";
   return {
-    type: "swarm.task.dispatched",
+    type: "task.dispatched",
     taskId: hookData.tool_use_id || "",
-    agent: `${teamName}-sidecar`,
-    targetAgent: matchedRole
-      ? `${teamName}-${matchedRole}`
-      : agentName,
+    from: `${teamName}-sidecar`,
+    targetAgent: matchedRole ? `${teamName}-${matchedRole}` : agentName,
     targetRole: matchedRole || "internal",
     description: prompt.substring(0, 300),
   };
 }
 
 /**
- * Build a swarm.task.completed event.
+ * Build a task.completed message payload.
  */
-export function buildTaskCompletedEvent(
-  hookData,
-  teamName,
-  matchedRole,
-  agentName
-) {
+export function buildTaskCompletedPayload(hookData, teamName, matchedRole, agentName) {
   return {
-    type: "swarm.task.completed",
+    type: "task.completed",
     taskId: hookData.tool_use_id || "",
     agent: matchedRole ? `${teamName}-${matchedRole}` : agentName,
-    parent: `${teamName}-sidecar`,
     status: "completed",
   };
 }
 
 /**
- * Build a swarm.turn.completed event.
+ * Build a task.completed message payload from TaskCompleted hook data.
  */
-export function buildTurnCompletedEvent(teamName, hookData) {
+export function buildTaskStatusPayload(hookData, teamName, matchedRole) {
   return {
-    type: "swarm.turn.completed",
-    agent: `${teamName}-sidecar`,
-    stopReason: hookData.stop_reason || "end_turn",
-  };
-}
-
-/**
- * Build a swarm.subagent.started event.
- */
-export function buildSubagentStartEvent(hookData, teamName) {
-  return {
-    type: "swarm.subagent.started",
-    agentId: hookData.agent_id || "",
-    agentType: hookData.agent_type || "",
-    parent: `${teamName}-sidecar`,
-    sessionId: hookData.session_id || "",
-  };
-}
-
-/**
- * Build a swarm.subagent.stopped event.
- */
-export function buildSubagentStopEvent(hookData, teamName) {
-  return {
-    type: "swarm.subagent.stopped",
-    agentId: hookData.agent_id || "",
-    agentType: hookData.agent_type || "",
-    parent: `${teamName}-sidecar`,
-    sessionId: hookData.session_id || "",
-    lastMessage: (hookData.last_assistant_message || "").substring(0, 500),
-  };
-}
-
-/**
- * Build a swarm.teammate.idle event.
- */
-export function buildTeammateIdleEvent(hookData, teamName, matchedRole) {
-  return {
-    type: "swarm.teammate.idle",
-    teammateName: hookData.teammate_name || "",
-    teamName: hookData.team_name || teamName,
-    role: matchedRole || "unknown",
-    isTeamRole: !!matchedRole,
-  };
-}
-
-/**
- * Build a swarm.task.status_completed event.
- */
-export function buildTaskStatusCompletedEvent(hookData, teamName, matchedRole) {
-  return {
-    type: "swarm.task.status_completed",
+    type: "task.completed",
     taskId: hookData.task_id || "",
     taskSubject: hookData.task_subject || "",
     taskDescription: (hookData.task_description || "").substring(0, 300),
-    teammateName: hookData.teammate_name || "",
+    agent: hookData.teammate_name || "",
     teamName: hookData.team_name || teamName,
     role: matchedRole || "unknown",
     isTeamRole: !!matchedRole,
+    status: "completed",
   };
 }

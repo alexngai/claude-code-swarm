@@ -111,7 +111,10 @@ describe("map-connection", () => {
       await fireAndForgetTrajectory(config, checkpoint);
       expect(mockSend).toHaveBeenCalled();
       const [, payload] = mockSend.mock.calls[0];
-      expect(payload.type).toBe("swarm.sessionlog.sync");
+      expect(payload.type).toBe("trajectory.checkpoint");
+      expect(payload.checkpoint.id).toBe("cp1");
+      expect(payload.checkpoint.agentId).toBe("a");
+      expect(payload.checkpoint.metadata).toEqual({ phase: "active" });
     });
 
     it("disconnects after sending", async () => {

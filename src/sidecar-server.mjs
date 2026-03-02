@@ -67,9 +67,14 @@ export function createSocketServer(socketPath, onCommand) {
 /**
  * Create a command handler for the sidecar socket server.
  *
+ * Uses MAP SDK primitives: conn.spawn() for agent registration (server
+ * auto-emits agent_registered), conn.updateState() for state changes
+ * (server auto-emits agent_state_changed), and conn.send() only for
+ * typed message payloads (task lifecycle). No custom swarm.* event types.
+ *
  * @param {object|null} connection - MAP AgentConnection (or null if disconnected)
  * @param {string} scope - MAP scope name
- * @param {Set} registeredAgents - Set of registered agent IDs
+ * @param {Map} registeredAgents - Map of agentId → spawn metadata
  * @returns {Function} async (command, client) => void
  */
 export function createCommandHandler(connection, scope, registeredAgents) {
@@ -101,41 +106,45 @@ export function createCommandHandler(connection, scope, registeredAgents) {
           break;
         }
 
-        case "register": {
+        // --- SDK-native agent lifecycle ---
+
+        case "spawn": {
           if (conn) {
-            const { agentId, name, role, parent, scopes, metadata } =
+            const { agentId, name, role, scopes: agentScopes, metadata } =
               command.agent;
-            await conn.send(
-              { scope },
-              {
-                type: "swarm.agent.registered",
+            try {
+              const result = await conn.spawn({
                 agentId,
                 name,
                 role,
-                parent,
-                scopes,
+                scopes: agentScopes,
                 metadata,
-              },
-              { relationship: "broadcast" }
-            );
-            registeredAgents.add(agentId);
+              });
+              registeredAgents.set(agentId, { name, role, metadata });
+              respond(client, { ok: true, agent: result });
+            } catch (err) {
+              process.stderr.write(
+                `[sidecar] spawn failed: ${err.message}\n`
+              );
+              respond(client, { ok: false, error: err.message });
+            }
+          } else {
+            respond(client, { ok: false, error: "no connection" });
           }
-          respond(client, { ok: true });
           break;
         }
 
-        case "unregister": {
+        case "done": {
           if (conn) {
             const { agentId, reason } = command;
-            await conn.send(
-              { scope },
-              {
-                type: "swarm.agent.unregistered",
+            try {
+              await conn.callExtension("map/agents/unregister", {
                 agentId,
-                reason: reason || "task completed",
-              },
-              { relationship: "broadcast" }
-            );
+                reason: reason || "completed",
+              });
+            } catch {
+              // Agent may already be gone
+            }
             registeredAgents.delete(agentId);
           }
           respond(client, { ok: true });
@@ -156,12 +165,14 @@ export function createCommandHandler(connection, scope, registeredAgents) {
               await conn.send(
                 { scope },
                 {
-                  type: "swarm.sessionlog.sync",
-                  ...command.checkpoint.metadata,
-                  checkpointId: command.checkpoint.id,
-                  agentId: command.checkpoint.agentId,
-                  sessionId: command.checkpoint.sessionId,
-                  label: command.checkpoint.label,
+                  type: "trajectory.checkpoint",
+                  checkpoint: {
+                    id: command.checkpoint.id,
+                    agentId: command.checkpoint.agentId,
+                    sessionId: command.checkpoint.sessionId,
+                    label: command.checkpoint.label,
+                    metadata: command.checkpoint.metadata,
+                  },
                 },
                 { relationship: "broadcast" }
               );
@@ -176,7 +187,22 @@ export function createCommandHandler(connection, scope, registeredAgents) {
         case "state": {
           if (conn) {
             try {
-              await conn.updateState(command.state);
+              if (command.agentId) {
+                // State update for a specific child agent — update via metadata
+                const existing = registeredAgents.get(command.agentId);
+                if (existing) {
+                  existing.lastState = command.state;
+                  if (command.metadata) {
+                    existing.metadata = { ...existing.metadata, ...command.metadata };
+                  }
+                }
+              } else {
+                // State update for the sidecar agent itself
+                await conn.updateState(command.state);
+                if (command.metadata) {
+                  await conn.updateMetadata(command.metadata);
+                }
+              }
             } catch {
               // State update failed, not critical
             }
