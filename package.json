@@ -32,7 +32,10 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "version:patch": "npm version patch --no-git-tag-version && node -e \"const fs=require('fs');const p=require('./package.json');const f='.claude-plugin/plugin.json';const j=JSON.parse(fs.readFileSync(f));j.version=p.version;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')\"",
+    "version:minor": "npm version minor --no-git-tag-version && node -e \"const fs=require('fs');const p=require('./package.json');const f='.claude-plugin/plugin.json';const j=JSON.parse(fs.readFileSync(f));j.version=p.version;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')\"",
+    "version:major": "npm version major --no-git-tag-version && node -e \"const fs=require('fs');const p=require('./package.json');const f='.claude-plugin/plugin.json';const j=JSON.parse(fs.readFileSync(f));j.version=p.version;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')\""
   },
   "engines": {
     "node": ">=18.0.0"
