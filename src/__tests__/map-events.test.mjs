@@ -5,8 +5,18 @@ import {
   buildTaskDispatchedEvent,
   buildTaskCompletedEvent,
   buildTurnCompletedEvent,
+  buildSubagentStartEvent,
+  buildSubagentStopEvent,
+  buildTeammateIdleEvent,
+  buildTaskStatusCompletedEvent,
 } from "../map-events.mjs";
-import { makeHookData } from "./helpers.mjs";
+import {
+  makeHookData,
+  makeSubagentStartData,
+  makeSubagentStopData,
+  makeTeammateIdleData,
+  makeTaskCompletedData,
+} from "./helpers.mjs";
 
 describe("map-events", () => {
   describe("buildSpawnEvent", () => {
@@ -153,6 +163,164 @@ describe("map-events", () => {
     it("defaults to 'end_turn'", () => {
       const e = buildTurnCompletedEvent("gsd", { stop_reason: undefined });
       expect(e.stopReason).toBe("end_turn");
+    });
+  });
+
+  describe("buildSubagentStartEvent", () => {
+    it("builds event with type 'swarm.subagent.started'", () => {
+      const e = buildSubagentStartEvent(makeSubagentStartData(), "gsd");
+      expect(e.type).toBe("swarm.subagent.started");
+    });
+
+    it("sets agentId from hookData", () => {
+      const e = buildSubagentStartEvent(makeSubagentStartData({ agentId: "agent-xyz" }), "gsd");
+      expect(e.agentId).toBe("agent-xyz");
+    });
+
+    it("sets agentType from hookData", () => {
+      const e = buildSubagentStartEvent(makeSubagentStartData({ agentType: "Plan" }), "gsd");
+      expect(e.agentType).toBe("Plan");
+    });
+
+    it("sets parent to teamName-sidecar", () => {
+      const e = buildSubagentStartEvent(makeSubagentStartData(), "my-team");
+      expect(e.parent).toBe("my-team-sidecar");
+    });
+
+    it("sets sessionId from hookData", () => {
+      const e = buildSubagentStartEvent(makeSubagentStartData({ sessionId: "sess-1" }), "t");
+      expect(e.sessionId).toBe("sess-1");
+    });
+
+    it("handles missing fields gracefully", () => {
+      const e = buildSubagentStartEvent({}, "t");
+      expect(e.agentId).toBe("");
+      expect(e.agentType).toBe("");
+      expect(e.sessionId).toBe("");
+    });
+  });
+
+  describe("buildSubagentStopEvent", () => {
+    it("builds event with type 'swarm.subagent.stopped'", () => {
+      const e = buildSubagentStopEvent(makeSubagentStopData(), "gsd");
+      expect(e.type).toBe("swarm.subagent.stopped");
+    });
+
+    it("sets agentId from hookData", () => {
+      const e = buildSubagentStopEvent(makeSubagentStopData({ agentId: "agent-xyz" }), "gsd");
+      expect(e.agentId).toBe("agent-xyz");
+    });
+
+    it("sets agentType from hookData", () => {
+      const e = buildSubagentStopEvent(makeSubagentStopData({ agentType: "Bash" }), "gsd");
+      expect(e.agentType).toBe("Bash");
+    });
+
+    it("sets parent to teamName-sidecar", () => {
+      const e = buildSubagentStopEvent(makeSubagentStopData(), "my-team");
+      expect(e.parent).toBe("my-team-sidecar");
+    });
+
+    it("includes lastMessage from hookData", () => {
+      const e = buildSubagentStopEvent(makeSubagentStopData({ lastAssistantMessage: "Done!" }), "t");
+      expect(e.lastMessage).toBe("Done!");
+    });
+
+    it("truncates lastMessage to 500 characters", () => {
+      const longMsg = "x".repeat(800);
+      const e = buildSubagentStopEvent(makeSubagentStopData({ lastAssistantMessage: longMsg }), "t");
+      expect(e.lastMessage.length).toBe(500);
+    });
+
+    it("handles missing fields gracefully", () => {
+      const e = buildSubagentStopEvent({}, "t");
+      expect(e.agentId).toBe("");
+      expect(e.agentType).toBe("");
+      expect(e.lastMessage).toBe("");
+    });
+  });
+
+  describe("buildTeammateIdleEvent", () => {
+    it("builds event with type 'swarm.teammate.idle'", () => {
+      const e = buildTeammateIdleEvent(makeTeammateIdleData(), "gsd", "researcher");
+      expect(e.type).toBe("swarm.teammate.idle");
+    });
+
+    it("sets teammateName from hookData", () => {
+      const e = buildTeammateIdleEvent(makeTeammateIdleData({ teammateName: "executor" }), "t", "executor");
+      expect(e.teammateName).toBe("executor");
+    });
+
+    it("sets teamName from hookData", () => {
+      const e = buildTeammateIdleEvent(makeTeammateIdleData({ teamName: "gsd-team" }), "t", null);
+      expect(e.teamName).toBe("gsd-team");
+    });
+
+    it("falls back to config teamName when hookData has no team_name", () => {
+      const e = buildTeammateIdleEvent({ teammate_name: "a" }, "fallback-team", null);
+      expect(e.teamName).toBe("fallback-team");
+    });
+
+    it("sets role from matchedRole", () => {
+      const e = buildTeammateIdleEvent(makeTeammateIdleData(), "t", "researcher");
+      expect(e.role).toBe("researcher");
+      expect(e.isTeamRole).toBe(true);
+    });
+
+    it("sets role to 'unknown' when no match", () => {
+      const e = buildTeammateIdleEvent(makeTeammateIdleData(), "t", null);
+      expect(e.role).toBe("unknown");
+      expect(e.isTeamRole).toBe(false);
+    });
+  });
+
+  describe("buildTaskStatusCompletedEvent", () => {
+    it("builds event with type 'swarm.task.status_completed'", () => {
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData(), "gsd", null);
+      expect(e.type).toBe("swarm.task.status_completed");
+    });
+
+    it("sets taskId from hookData", () => {
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData({ taskId: "t-99" }), "t", null);
+      expect(e.taskId).toBe("t-99");
+    });
+
+    it("sets taskSubject from hookData", () => {
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData({ taskSubject: "Fix bug" }), "t", null);
+      expect(e.taskSubject).toBe("Fix bug");
+    });
+
+    it("truncates taskDescription to 300 characters", () => {
+      const longDesc = "d".repeat(500);
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData({ taskDescription: longDesc }), "t", null);
+      expect(e.taskDescription.length).toBe(300);
+    });
+
+    it("sets teammateName from hookData", () => {
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData({ teammateName: "builder" }), "t", "builder");
+      expect(e.teammateName).toBe("builder");
+    });
+
+    it("sets teamName from hookData", () => {
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData({ teamName: "gsd" }), "t", null);
+      expect(e.teamName).toBe("gsd");
+    });
+
+    it("falls back to config teamName", () => {
+      const e = buildTaskStatusCompletedEvent({ task_id: "1" }, "fallback", null);
+      expect(e.teamName).toBe("fallback");
+    });
+
+    it("sets role from matchedRole", () => {
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData(), "t", "implementer");
+      expect(e.role).toBe("implementer");
+      expect(e.isTeamRole).toBe(true);
+    });
+
+    it("sets role to 'unknown' when no match", () => {
+      const e = buildTaskStatusCompletedEvent(makeTaskCompletedData(), "t", null);
+      expect(e.role).toBe("unknown");
+      expect(e.isTeamRole).toBe(false);
     });
   });
 });

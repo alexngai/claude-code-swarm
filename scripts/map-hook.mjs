@@ -26,6 +26,10 @@ import {
   buildTaskDispatchedEvent,
   buildTaskCompletedEvent,
   buildTurnCompletedEvent,
+  buildSubagentStartEvent,
+  buildSubagentStopEvent,
+  buildTeammateIdleEvent,
+  buildTaskStatusCompletedEvent,
 } from "../src/map-events.mjs";
 import { syncSessionlog } from "../src/sessionlog.mjs";
 
@@ -123,6 +127,55 @@ async function handleSessionlogSync() {
   await syncSessionlog(config);
 }
 
+async function handleSubagentStart() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const teamName = resolveTeamName(config);
+
+  await emitEvent(config, buildSubagentStartEvent(hookData, teamName));
+}
+
+async function handleSubagentStop() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const teamName = resolveTeamName(config);
+
+  await emitEvent(config, buildSubagentStopEvent(hookData, teamName));
+}
+
+async function handleTeammateIdle() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const roles = readRoles();
+  const teamName = resolveTeamName(config);
+
+  const teammateName = hookData.teammate_name || "";
+  const matchedRole = matchRole(teammateName, roles);
+
+  // Update sidecar state for this teammate
+  if (matchedRole) {
+    await sendToSidecar({
+      action: "state",
+      state: "idle",
+      agentId: `${teamName}-${matchedRole}`,
+    });
+  }
+
+  await emitEvent(config, buildTeammateIdleEvent(hookData, teamName, matchedRole));
+}
+
+async function handleTaskCompleted() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const roles = readRoles();
+  const teamName = resolveTeamName(config);
+
+  const teammateName = hookData.teammate_name || "";
+  const matchedRole = matchRole(teammateName, roles);
+
+  await emitEvent(config, buildTaskStatusCompletedEvent(hookData, teamName, matchedRole));
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -133,6 +186,10 @@ async function main() {
       case "agent-completed": await handleAgentCompleted(); break;
       case "turn-completed": await handleTurnCompleted(); break;
       case "sessionlog-sync": await handleSessionlogSync(); break;
+      case "subagent-start": await handleSubagentStart(); break;
+      case "subagent-stop": await handleSubagentStop(); break;
+      case "teammate-idle": await handleTeammateIdle(); break;
+      case "task-completed": await handleTaskCompleted(); break;
       default:
         process.stderr.write(`[map-hook] Unknown action: ${action}\n`);
     }

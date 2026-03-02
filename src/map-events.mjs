@@ -104,3 +104,59 @@ export function buildTurnCompletedEvent(teamName, hookData) {
     stopReason: hookData.stop_reason || "end_turn",
   };
 }
+
+/**
+ * Build a swarm.subagent.started event.
+ */
+export function buildSubagentStartEvent(hookData, teamName) {
+  return {
+    type: "swarm.subagent.started",
+    agentId: hookData.agent_id || "",
+    agentType: hookData.agent_type || "",
+    parent: `${teamName}-sidecar`,
+    sessionId: hookData.session_id || "",
+  };
+}
+
+/**
+ * Build a swarm.subagent.stopped event.
+ */
+export function buildSubagentStopEvent(hookData, teamName) {
+  return {
+    type: "swarm.subagent.stopped",
+    agentId: hookData.agent_id || "",
+    agentType: hookData.agent_type || "",
+    parent: `${teamName}-sidecar`,
+    sessionId: hookData.session_id || "",
+    lastMessage: (hookData.last_assistant_message || "").substring(0, 500),
+  };
+}
+
+/**
+ * Build a swarm.teammate.idle event.
+ */
+export function buildTeammateIdleEvent(hookData, teamName, matchedRole) {
+  return {
+    type: "swarm.teammate.idle",
+    teammateName: hookData.teammate_name || "",
+    teamName: hookData.team_name || teamName,
+    role: matchedRole || "unknown",
+    isTeamRole: !!matchedRole,
+  };
+}
+
+/**
+ * Build a swarm.task.status_completed event.
+ */
+export function buildTaskStatusCompletedEvent(hookData, teamName, matchedRole) {
+  return {
+    type: "swarm.task.status_completed",
+    taskId: hookData.task_id || "",
+    taskSubject: hookData.task_subject || "",
+    taskDescription: (hookData.task_description || "").substring(0, 300),
+    teammateName: hookData.teammate_name || "",
+    teamName: hookData.team_name || teamName,
+    role: matchedRole || "unknown",
+    isTeamRole: !!matchedRole,
+  };
+}

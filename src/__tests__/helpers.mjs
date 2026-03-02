@@ -73,6 +73,60 @@ export function makeHookData(overrides = {}) {
   };
 }
 
+export function makeSubagentStartData(overrides = {}) {
+  return {
+    session_id: overrides.sessionId ?? "session-123",
+    transcript_path: overrides.transcriptPath ?? "/tmp/transcript.jsonl",
+    cwd: overrides.cwd ?? "/tmp",
+    permission_mode: overrides.permissionMode ?? "default",
+    hook_event_name: "SubagentStart",
+    agent_id: overrides.agentId ?? "agent-abc123",
+    agent_type: overrides.agentType ?? "Explore",
+  };
+}
+
+export function makeSubagentStopData(overrides = {}) {
+  return {
+    session_id: overrides.sessionId ?? "session-123",
+    transcript_path: overrides.transcriptPath ?? "/tmp/transcript.jsonl",
+    cwd: overrides.cwd ?? "/tmp",
+    permission_mode: overrides.permissionMode ?? "default",
+    hook_event_name: "SubagentStop",
+    stop_hook_active: overrides.stopHookActive ?? false,
+    agent_id: overrides.agentId ?? "agent-def456",
+    agent_type: overrides.agentType ?? "Explore",
+    agent_transcript_path: overrides.agentTranscriptPath ?? "/tmp/subagents/agent-def456.jsonl",
+    last_assistant_message: overrides.lastAssistantMessage ?? "Analysis complete.",
+  };
+}
+
+export function makeTeammateIdleData(overrides = {}) {
+  return {
+    session_id: overrides.sessionId ?? "session-123",
+    transcript_path: overrides.transcriptPath ?? "/tmp/transcript.jsonl",
+    cwd: overrides.cwd ?? "/tmp",
+    permission_mode: overrides.permissionMode ?? "default",
+    hook_event_name: "TeammateIdle",
+    teammate_name: overrides.teammateName ?? "researcher",
+    team_name: overrides.teamName ?? "my-team",
+  };
+}
+
+export function makeTaskCompletedData(overrides = {}) {
+  return {
+    session_id: overrides.sessionId ?? "session-123",
+    transcript_path: overrides.transcriptPath ?? "/tmp/transcript.jsonl",
+    cwd: overrides.cwd ?? "/tmp",
+    permission_mode: overrides.permissionMode ?? "default",
+    hook_event_name: "TaskCompleted",
+    task_id: overrides.taskId ?? "task-001",
+    task_subject: overrides.taskSubject ?? "Implement feature",
+    task_description: overrides.taskDescription ?? "Add the new feature",
+    teammate_name: overrides.teammateName ?? "implementer",
+    team_name: overrides.teamName ?? "my-team",
+  };
+}
+
 export function cleanupTmpDir(dir) {
   try {
     fs.rmSync(dir, { recursive: true, force: true });

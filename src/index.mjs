@@ -52,6 +52,10 @@ export {
   buildTaskDispatchedEvent,
   buildTaskCompletedEvent,
   buildTurnCompletedEvent,
+  buildSubagentStartEvent,
+  buildSubagentStopEvent,
+  buildTeammateIdleEvent,
+  buildTaskStatusCompletedEvent,
 } from "./map-events.mjs";
 
 // Sessionlog

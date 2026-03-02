@@ -59,6 +59,10 @@ describe("index", () => {
   it("exports buildTaskDispatchedEvent", () => expect(typeof index.buildTaskDispatchedEvent).toBe("function"));
   it("exports buildTaskCompletedEvent", () => expect(typeof index.buildTaskCompletedEvent).toBe("function"));
   it("exports buildTurnCompletedEvent", () => expect(typeof index.buildTurnCompletedEvent).toBe("function"));
+  it("exports buildSubagentStartEvent", () => expect(typeof index.buildSubagentStartEvent).toBe("function"));
+  it("exports buildSubagentStopEvent", () => expect(typeof index.buildSubagentStopEvent).toBe("function"));
+  it("exports buildTeammateIdleEvent", () => expect(typeof index.buildTeammateIdleEvent).toBe("function"));
+  it("exports buildTaskStatusCompletedEvent", () => expect(typeof index.buildTaskStatusCompletedEvent).toBe("function"));
 
   // Sessionlog exports
   it("exports checkSessionlogStatus", () => expect(typeof index.checkSessionlogStatus).toBe("function"));
