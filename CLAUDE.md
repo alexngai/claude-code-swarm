@@ -75,24 +75,24 @@ claude-code-swarm/
 {
   "template": "get-shit-done",
   "map": {
-    "enabled": true,
-    "server": "ws://localhost:8080",
-    "sidecar": "session"
+    "server": "ws://localhost:8080"
   }
 }
 ```
 
+MAP is automatically enabled when `map.server` is configured (or `SWARM_MAP_SERVER` env var is set). You can explicitly disable it with `SWARM_MAP_ENABLED=false`.
+
 MAP options:
-- `server` — MAP server WebSocket URL (default: `ws://localhost:8080`)
+- `server` — MAP server WebSocket URL (default: `ws://localhost:8080`). Setting this implicitly enables MAP.
 - `scope` — MAP scope name (default: `swarm:<template>`)
 - `systemId` — System identifier for federation (default: `system-claude-swarm`)
-- `sidecar` — `"session"` (starts/stops with session) or `"persistent"` (user-managed)
+- `sidecar` — `"session"` (starts/stops with session, default) or `"persistent"` (user-managed)
 
 ### With sessionlog → MAP sync
 ```json
 {
   "template": "get-shit-done",
-  "map": { "enabled": true },
+  "map": { "server": "ws://localhost:8080" },
   "sessionlog": {
     "enabled": true,
     "sync": "full"
@@ -116,6 +116,28 @@ Requires sessionlog to be installed and active independently (`sessionlog enable
 Point to any openteams template directory:
 ```json
 { "template": "/path/to/your/template" }
+```
+
+### Environment variable overrides
+
+All config values can be overridden via `SWARM_*` environment variables. Priority: env var > config file > defaults.
+
+| Config field | Environment variable | Type | Default |
+|---|---|---|---|
+| `template` | `SWARM_TEMPLATE` | string | `""` |
+| `map.server` | `SWARM_MAP_SERVER` | string | `ws://localhost:8080` |
+| `map.enabled` | `SWARM_MAP_ENABLED` | boolean (`true`/`1`/`yes`) | implicit (see below) |
+| `map.scope` | `SWARM_MAP_SCOPE` | string | `""` (derived from template) |
+| `map.systemId` | `SWARM_MAP_SYSTEM_ID` | string | `system-claude-swarm` |
+| `map.sidecar` | `SWARM_MAP_SIDECAR` | string | `session` |
+| `sessionlog.enabled` | `SWARM_SESSIONLOG_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
+| `sessionlog.sync` | `SWARM_SESSIONLOG_SYNC` | string | `off` |
+
+MAP is implicitly enabled when `map.server` is configured (in file or via `SWARM_MAP_SERVER`). Use `SWARM_MAP_ENABLED=false` to explicitly disable.
+
+Example — point to a MAP server in CI (implicitly enables MAP):
+```bash
+SWARM_MAP_SERVER=ws://map.ci.internal:8080 claude
 ```
 
 ## Architecture

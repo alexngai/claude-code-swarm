@@ -16,42 +16,55 @@ export const DEFAULTS = {
 };
 
 /**
+ * Read env var as boolean. Truthy: "true", "1", "yes" (case-insensitive).
+ * Returns undefined if unset so ?? falls through to file/default.
+ */
+function envBool(name) {
+  const val = process.env[name];
+  if (val === undefined) return undefined;
+  return ["true", "1", "yes"].includes(val.toLowerCase());
+}
+
+/**
+ * Read env var as string. Returns undefined if unset or empty.
+ */
+function envStr(name) {
+  return process.env[name] || undefined;
+}
+
+/**
  * Read and normalize .claude-swarm.json config.
+ * Priority: SWARM_* env vars > config file > defaults.
  * Never throws — returns defaults on any error.
  */
 export function readConfig(configPath = ".claude-swarm.json") {
+  let raw = {};
   try {
-    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    return {
-      template: raw.template || "",
-      map: {
-        enabled: Boolean(raw.map?.enabled),
-        server: raw.map?.server || DEFAULTS.mapServer,
-        scope: raw.map?.scope || "",
-        systemId: raw.map?.systemId || DEFAULTS.mapSystemId,
-        sidecar: raw.map?.sidecar || DEFAULTS.mapSidecar,
-      },
-      sessionlog: {
-        enabled: Boolean(raw.sessionlog?.enabled),
-        sync: raw.sessionlog?.sync || DEFAULTS.sessionlogSync,
-      },
-    };
+    raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
   } catch {
-    return {
-      template: "",
-      map: {
-        enabled: false,
-        server: DEFAULTS.mapServer,
-        scope: "",
-        systemId: DEFAULTS.mapSystemId,
-        sidecar: DEFAULTS.mapSidecar,
-      },
-      sessionlog: {
-        enabled: false,
-        sync: DEFAULTS.sessionlogSync,
-      },
-    };
+    // Missing or invalid config file — raw stays empty, defaults apply
   }
+
+  const server = envStr("SWARM_MAP_SERVER") ?? raw.map?.server ?? undefined;
+  const explicitEnabled = envBool("SWARM_MAP_ENABLED") ?? (raw.map?.enabled === true ? true : undefined);
+
+  // MAP is enabled if explicitly set OR if a server is configured
+  const mapEnabled = explicitEnabled ?? (server !== undefined);
+
+  return {
+    template: envStr("SWARM_TEMPLATE") ?? raw.template ?? "",
+    map: {
+      enabled: mapEnabled,
+      server: server || DEFAULTS.mapServer,
+      scope: envStr("SWARM_MAP_SCOPE") ?? raw.map?.scope ?? "",
+      systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? raw.map?.systemId ?? DEFAULTS.mapSystemId,
+      sidecar: envStr("SWARM_MAP_SIDECAR") ?? raw.map?.sidecar ?? DEFAULTS.mapSidecar,
+    },
+    sessionlog: {
+      enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(raw.sessionlog?.enabled),
+      sync: envStr("SWARM_SESSIONLOG_SYNC") ?? raw.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
+    },
+  };
 }
 
 /**

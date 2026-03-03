@@ -5,7 +5,7 @@
  * for when the sidecar is unavailable.
  */
 
-import { resolveScope, resolveTeamName } from "./config.mjs";
+import { resolveScope, resolveTeamName, DEFAULTS } from "./config.mjs";
 
 /**
  * Connect to a MAP server as an agent.
@@ -60,7 +60,7 @@ export async function connectToMAP({ server, scope, systemId, onMessage }) {
 export async function fireAndForget(config, event) {
   try {
     const { AgentConnection } = await import("@multi-agent-protocol/sdk");
-    const server = config.map?.server || "ws://localhost:8080";
+    const server = config.map?.server || DEFAULTS.mapServer;
     const scope = resolveScope(config);
     const teamName = resolveTeamName(config);
 
@@ -84,7 +84,7 @@ export async function fireAndForget(config, event) {
 export async function fireAndForgetTrajectory(config, checkpoint) {
   try {
     const { AgentConnection } = await import("@multi-agent-protocol/sdk");
-    const server = config.map?.server || "ws://localhost:8080";
+    const server = config.map?.server || DEFAULTS.mapServer;
     const scope = resolveScope(config);
     const teamName = resolveTeamName(config);
 
