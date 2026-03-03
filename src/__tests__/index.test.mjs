@@ -52,13 +52,17 @@ describe("index", () => {
   it("exports createCommandHandler", () => expect(typeof index.createCommandHandler).toBe("function"));
   it("exports respond", () => expect(typeof index.respond).toBe("function"));
 
-  // MAP events exports
-  it("exports emitEvent", () => expect(typeof index.emitEvent).toBe("function"));
-  it("exports buildSpawnEvent", () => expect(typeof index.buildSpawnEvent).toBe("function"));
-  it("exports buildCompletedEvent", () => expect(typeof index.buildCompletedEvent).toBe("function"));
-  it("exports buildTaskDispatchedEvent", () => expect(typeof index.buildTaskDispatchedEvent).toBe("function"));
-  it("exports buildTaskCompletedEvent", () => expect(typeof index.buildTaskCompletedEvent).toBe("function"));
-  it("exports buildTurnCompletedEvent", () => expect(typeof index.buildTurnCompletedEvent).toBe("function"));
+  // MAP events exports — sidecar commands and message payloads
+  it("exports sendCommand", () => expect(typeof index.sendCommand).toBe("function"));
+  it("exports emitPayload", () => expect(typeof index.emitPayload).toBe("function"));
+  it("exports buildSpawnCommand", () => expect(typeof index.buildSpawnCommand).toBe("function"));
+  it("exports buildDoneCommand", () => expect(typeof index.buildDoneCommand).toBe("function"));
+  it("exports buildSubagentSpawnCommand", () => expect(typeof index.buildSubagentSpawnCommand).toBe("function"));
+  it("exports buildSubagentDoneCommand", () => expect(typeof index.buildSubagentDoneCommand).toBe("function"));
+  it("exports buildStateCommand", () => expect(typeof index.buildStateCommand).toBe("function"));
+  it("exports buildTaskDispatchedPayload", () => expect(typeof index.buildTaskDispatchedPayload).toBe("function"));
+  it("exports buildTaskCompletedPayload", () => expect(typeof index.buildTaskCompletedPayload).toBe("function"));
+  it("exports buildTaskStatusPayload", () => expect(typeof index.buildTaskStatusPayload).toBe("function"));
 
   // Sessionlog exports
   it("exports checkSessionlogStatus", () => expect(typeof index.checkSessionlogStatus).toBe("function"));

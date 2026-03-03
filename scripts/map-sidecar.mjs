@@ -33,7 +33,7 @@ const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 let connection = null;
 let socketServer = null;
 let inactivityTimer = null;
-const registeredAgents = new Set();
+const registeredAgents = new Map();
 
 // ── Inactivity Timer ────────────────────────────────────────────────────────
 

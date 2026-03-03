@@ -83,11 +83,13 @@ describe("sidecar-server", () => {
     beforeEach(() => {
       mockConnection = {
         send: vi.fn().mockResolvedValue(undefined),
+        spawn: vi.fn().mockResolvedValue({ agentId: "spawned-1" }),
         updateState: vi.fn().mockResolvedValue(undefined),
+        updateMetadata: vi.fn().mockResolvedValue(undefined),
         callExtension: vi.fn().mockResolvedValue(undefined),
       };
       mockClient = { write: vi.fn() };
-      registeredAgents = new Set();
+      registeredAgents = new Map();
       handler = createCommandHandler(mockConnection, "swarm:test", registeredAgents);
     });
 
@@ -118,46 +120,97 @@ describe("sidecar-server", () => {
       });
     });
 
-    describe("register", () => {
-      it("sends swarm.agent.registered event", async () => {
+    // ── SDK-native agent lifecycle ────────────────────────────────────────
+
+    describe("spawn", () => {
+      it("calls conn.spawn() with agent config", async () => {
         await handler({
-          action: "register",
-          agent: { agentId: "a-1", name: "a", role: "dev", parent: "root", scopes: ["s"], metadata: {} },
+          action: "spawn",
+          agent: { agentId: "gsd-exec", name: "exec", role: "executor", scopes: ["s"], metadata: { template: "gsd" } },
         }, mockClient);
-        const [, payload] = mockConnection.send.mock.calls[0];
-        expect(payload.type).toBe("swarm.agent.registered");
-        expect(payload.agentId).toBe("a-1");
+        expect(mockConnection.spawn).toHaveBeenCalledWith({
+          agentId: "gsd-exec",
+          name: "exec",
+          role: "executor",
+          scopes: ["s"],
+          metadata: { template: "gsd" },
+        });
       });
 
-      it("adds agentId to registeredAgents", async () => {
+      it("adds agent to registeredAgents map", async () => {
         await handler({
-          action: "register",
-          agent: { agentId: "a-1", name: "a", role: "dev", parent: "root", scopes: ["s"], metadata: {} },
+          action: "spawn",
+          agent: { agentId: "gsd-exec", name: "exec", role: "executor", scopes: ["s"], metadata: {} },
         }, mockClient);
-        expect(registeredAgents.has("a-1")).toBe(true);
+        expect(registeredAgents.has("gsd-exec")).toBe(true);
+        expect(registeredAgents.get("gsd-exec")).toEqual({ name: "exec", role: "executor", metadata: {} });
+      });
+
+      it("responds with {ok: true, agent} on success", async () => {
+        mockConnection.spawn.mockResolvedValueOnce({ agentId: "gsd-exec" });
+        await handler({
+          action: "spawn",
+          agent: { agentId: "gsd-exec", name: "exec", role: "executor", scopes: ["s"], metadata: {} },
+        }, mockClient);
+        const written = JSON.parse(mockClient.write.mock.calls[0][0]);
+        expect(written.ok).toBe(true);
+        expect(written.agent).toEqual({ agentId: "gsd-exec" });
+      });
+
+      it("responds with {ok: false} when spawn throws", async () => {
+        mockConnection.spawn.mockRejectedValueOnce(new Error("quota exceeded"));
+        await handler({
+          action: "spawn",
+          agent: { agentId: "gsd-exec", name: "exec", role: "executor", scopes: ["s"], metadata: {} },
+        }, mockClient);
+        const written = JSON.parse(mockClient.write.mock.calls[0][0]);
+        expect(written.ok).toBe(false);
+      });
+
+      it("responds {ok: false} when no connection", async () => {
+        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents);
+        await nullHandler({
+          action: "spawn",
+          agent: { agentId: "a", name: "a", role: "r", scopes: [], metadata: {} },
+        }, mockClient);
+        const written = JSON.parse(mockClient.write.mock.calls[0][0]);
+        expect(written.ok).toBe(false);
       });
     });
 
-    describe("unregister", () => {
-      it("sends swarm.agent.unregistered event", async () => {
-        registeredAgents.add("a-1");
-        await handler({ action: "unregister", agentId: "a-1", reason: "done" }, mockClient);
-        const [, payload] = mockConnection.send.mock.calls[0];
-        expect(payload.type).toBe("swarm.agent.unregistered");
+    describe("done", () => {
+      it("calls callExtension to unregister agent", async () => {
+        registeredAgents.set("gsd-exec", { name: "exec", role: "executor" });
+        await handler({ action: "done", agentId: "gsd-exec", reason: "completed" }, mockClient);
+        expect(mockConnection.callExtension).toHaveBeenCalledWith(
+          "map/agents/unregister",
+          { agentId: "gsd-exec", reason: "completed" }
+        );
       });
 
       it("removes agentId from registeredAgents", async () => {
-        registeredAgents.add("a-1");
-        await handler({ action: "unregister", agentId: "a-1" }, mockClient);
-        expect(registeredAgents.has("a-1")).toBe(false);
+        registeredAgents.set("gsd-exec", { name: "exec" });
+        await handler({ action: "done", agentId: "gsd-exec" }, mockClient);
+        expect(registeredAgents.has("gsd-exec")).toBe(false);
       });
 
-      it("uses default reason when not provided", async () => {
-        await handler({ action: "unregister", agentId: "a-1" }, mockClient);
-        const [, payload] = mockConnection.send.mock.calls[0];
-        expect(payload.reason).toBe("task completed");
+      it("defaults reason to 'completed'", async () => {
+        await handler({ action: "done", agentId: "gsd-exec" }, mockClient);
+        expect(mockConnection.callExtension).toHaveBeenCalledWith(
+          "map/agents/unregister",
+          { agentId: "gsd-exec", reason: "completed" }
+        );
+      });
+
+      it("responds {ok: true} even if agent not found", async () => {
+        mockConnection.callExtension.mockRejectedValueOnce(new Error("not found"));
+        await handler({ action: "done", agentId: "gone" }, mockClient);
+        const written = JSON.parse(mockClient.write.mock.calls[0][0]);
+        expect(written.ok).toBe(true);
       });
     });
+
+    // ── Trajectory ────────────────────────────────────────────────────────
 
     describe("trajectory-checkpoint", () => {
       it("calls callExtension on success", async () => {
@@ -174,13 +227,16 @@ describe("sidecar-server", () => {
         expect(written.method).toBe("trajectory");
       });
 
-      it("falls back to broadcast when callExtension throws", async () => {
+      it("falls back to broadcast with trajectory.checkpoint payload when callExtension throws", async () => {
         mockConnection.callExtension.mockRejectedValueOnce(new Error("not supported"));
         const cp = { id: "cp1", agentId: "a", sessionId: "s", label: "l", metadata: { phase: "active" } };
         await handler({ action: "trajectory-checkpoint", checkpoint: cp }, mockClient);
         expect(mockConnection.send).toHaveBeenCalled();
         const [, payload] = mockConnection.send.mock.calls[0];
-        expect(payload.type).toBe("swarm.sessionlog.sync");
+        expect(payload.type).toBe("trajectory.checkpoint");
+        expect(payload.checkpoint.id).toBe("cp1");
+        expect(payload.checkpoint.agentId).toBe("a");
+        expect(payload.checkpoint.metadata).toEqual({ phase: "active" });
       });
 
       it("responds {ok: false} when no connection", async () => {
@@ -191,10 +247,24 @@ describe("sidecar-server", () => {
       });
     });
 
+    // ── State ─────────────────────────────────────────────────────────────
+
     describe("state", () => {
-      it("calls connection.updateState", async () => {
+      it("calls connection.updateState for sidecar agent (no agentId)", async () => {
         await handler({ action: "state", state: "idle" }, mockClient);
         expect(mockConnection.updateState).toHaveBeenCalledWith("idle");
+      });
+
+      it("calls connection.updateMetadata when metadata provided", async () => {
+        await handler({ action: "state", state: "idle", metadata: { lastStopReason: "end_turn" } }, mockClient);
+        expect(mockConnection.updateState).toHaveBeenCalledWith("idle");
+        expect(mockConnection.updateMetadata).toHaveBeenCalledWith({ lastStopReason: "end_turn" });
+      });
+
+      it("tracks state for child agent in registeredAgents", async () => {
+        registeredAgents.set("gsd-exec", { name: "exec", role: "executor", metadata: {} });
+        await handler({ action: "state", state: "idle", agentId: "gsd-exec" }, mockClient);
+        expect(registeredAgents.get("gsd-exec").lastState).toBe("idle");
       });
 
       it("responds {ok: true} even if updateState fails", async () => {
@@ -205,6 +275,8 @@ describe("sidecar-server", () => {
       });
     });
 
+    // ── Ping ──────────────────────────────────────────────────────────────
+
     describe("ping", () => {
       it("responds with {ok: true, pid}", async () => {
         await handler({ action: "ping" }, mockClient);
@@ -213,6 +285,8 @@ describe("sidecar-server", () => {
         expect(written.pid).toBe(process.pid);
       });
     });
+
+    // ── Unknown ───────────────────────────────────────────────────────────
 
     describe("unknown action", () => {
       it("responds with error", async () => {
@@ -223,9 +297,17 @@ describe("sidecar-server", () => {
       });
     });
 
+    // ── setConnection ─────────────────────────────────────────────────────
+
     describe("setConnection", () => {
       it("updates the connection reference", async () => {
-        const newConn = { send: vi.fn().mockResolvedValue(undefined), updateState: vi.fn(), callExtension: vi.fn() };
+        const newConn = {
+          send: vi.fn().mockResolvedValue(undefined),
+          spawn: vi.fn().mockResolvedValue(undefined),
+          updateState: vi.fn(),
+          updateMetadata: vi.fn(),
+          callExtension: vi.fn(),
+        };
         handler.setConnection(newConn);
         await handler({ action: "emit", event: { type: "x" } }, mockClient);
         expect(newConn.send).toHaveBeenCalled();

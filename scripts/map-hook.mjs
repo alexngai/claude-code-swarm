@@ -3,13 +3,20 @@
  * map-hook.mjs — Hook helper for claude-code-swarm MAP integration
  *
  * Thin wrapper: reads action + stdin, dispatches to src/ modules.
+ * Uses MAP SDK primitives via the sidecar (spawn/done/state) for agent
+ * lifecycle, and typed message payloads for task lifecycle.
+ * No custom swarm.* event types.
  *
  * Actions:
  *   inject          — Read inbox, format as markdown, output to stdout
- *   agent-spawning  — Register agent + emit spawn events
- *   agent-completed — Unregister agent + emit completion events
- *   turn-completed  — Update state + emit turn event
+ *   agent-spawning  — Spawn agent in MAP + emit task.dispatched payload
+ *   agent-completed — Done agent in MAP + emit task.completed payload
+ *   turn-completed  — Update sidecar state to idle
  *   sessionlog-sync — Sync sessionlog state to MAP
+ *   subagent-start  — Spawn subagent in MAP
+ *   subagent-stop   — Done subagent in MAP
+ *   teammate-idle   — Update teammate state to idle
+ *   task-completed  — Emit task.completed payload
  *
  * Usage: node map-hook.mjs <action>
  *        Hook event data is read from stdin (JSON).
@@ -18,14 +25,17 @@
 import { readConfig, resolveTeamName } from "../src/config.mjs";
 import { readRoles, matchRole } from "../src/roles.mjs";
 import { readInbox, clearInbox, formatInboxAsMarkdown } from "../src/inbox.mjs";
-import { sendToSidecar } from "../src/sidecar-client.mjs";
 import {
-  emitEvent,
-  buildSpawnEvent,
-  buildCompletedEvent,
-  buildTaskDispatchedEvent,
-  buildTaskCompletedEvent,
-  buildTurnCompletedEvent,
+  sendCommand,
+  emitPayload,
+  buildSpawnCommand,
+  buildDoneCommand,
+  buildSubagentSpawnCommand,
+  buildSubagentDoneCommand,
+  buildStateCommand,
+  buildTaskDispatchedPayload,
+  buildTaskCompletedPayload,
+  buildTaskStatusPayload,
 } from "../src/map-events.mjs";
 import { syncSessionlog } from "../src/sessionlog.mjs";
 
@@ -66,24 +76,13 @@ async function handleAgentSpawning() {
   const matchedRole = matchRole(agentName, roles);
   const teamName = resolveTeamName(config);
 
-  // Register team agent in MAP if it matches a topology role
+  // Spawn agent in MAP via sidecar (server auto-emits agent_registered)
   if (matchedRole) {
-    await sendToSidecar({
-      action: "register",
-      agent: {
-        agentId: `${teamName}-${matchedRole}`,
-        name: matchedRole,
-        role: matchedRole,
-        parent: `${teamName}-sidecar`,
-        scopes: [config.map?.scope || `swarm:${teamName}`],
-        metadata: { template: teamName, position: "spawned" },
-      },
-    });
+    await sendCommand(config, buildSpawnCommand(agentName, matchedRole, teamName, hookData));
   }
 
-  // Emit spawn + task.dispatched events
-  await emitEvent(config, buildSpawnEvent(agentName, matchedRole, teamName, hookData));
-  await emitEvent(config, buildTaskDispatchedEvent(hookData, teamName, matchedRole, agentName));
+  // Emit task.dispatched as a regular MAP message
+  await emitPayload(config, buildTaskDispatchedPayload(hookData, teamName, matchedRole, agentName));
 }
 
 async function handleAgentCompleted() {
@@ -95,32 +94,72 @@ async function handleAgentCompleted() {
   const matchedRole = matchRole(agentName, roles);
   const teamName = resolveTeamName(config);
 
-  // Unregister team agent if it was a topology role
+  // Mark agent done in MAP via sidecar (server auto-emits agent_unregistered)
   if (matchedRole) {
-    await sendToSidecar({
-      action: "unregister",
-      agentId: `${teamName}-${matchedRole}`,
-      reason: "task completed",
-    });
+    await sendCommand(config, buildDoneCommand(agentName, matchedRole, teamName));
   }
 
-  // Emit completed + task.completed events
-  await emitEvent(config, buildCompletedEvent(agentName, matchedRole, teamName));
-  await emitEvent(config, buildTaskCompletedEvent(hookData, teamName, matchedRole, agentName));
+  // Emit task.completed as a regular MAP message
+  await emitPayload(config, buildTaskCompletedPayload(hookData, teamName, matchedRole, agentName));
 }
 
 async function handleTurnCompleted() {
   const config = readConfig();
   const hookData = await readStdin();
-  const teamName = resolveTeamName(config);
 
-  await sendToSidecar({ action: "state", state: "idle" });
-  await emitEvent(config, buildTurnCompletedEvent(teamName, hookData));
+  // Update sidecar state to idle (server auto-emits agent_state_changed)
+  const stopReason = hookData.stop_reason || "end_turn";
+  await sendCommand(config, buildStateCommand(null, "idle", { lastStopReason: stopReason }));
 }
 
 async function handleSessionlogSync() {
   const config = readConfig();
   await syncSessionlog(config);
+}
+
+async function handleSubagentStart() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const teamName = resolveTeamName(config);
+
+  // Spawn subagent in MAP (server auto-emits agent_registered)
+  await sendCommand(config, buildSubagentSpawnCommand(hookData, teamName));
+}
+
+async function handleSubagentStop() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const teamName = resolveTeamName(config);
+
+  // Mark subagent done (server auto-emits agent_unregistered)
+  await sendCommand(config, buildSubagentDoneCommand(hookData, teamName));
+}
+
+async function handleTeammateIdle() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const roles = readRoles();
+  const teamName = resolveTeamName(config);
+
+  const teammateName = hookData.teammate_name || "";
+  const matchedRole = matchRole(teammateName, roles);
+
+  // Update teammate state to idle (server auto-emits agent_state_changed)
+  const agentId = matchedRole ? `${teamName}-${matchedRole}` : null;
+  await sendCommand(config, buildStateCommand(agentId, "idle"));
+}
+
+async function handleTaskCompleted() {
+  const config = readConfig();
+  const hookData = await readStdin();
+  const roles = readRoles();
+  const teamName = resolveTeamName(config);
+
+  const teammateName = hookData.teammate_name || "";
+  const matchedRole = matchRole(teammateName, roles);
+
+  // Emit task.completed as a regular MAP message
+  await emitPayload(config, buildTaskStatusPayload(hookData, teamName, matchedRole));
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -133,6 +172,10 @@ async function main() {
       case "agent-completed": await handleAgentCompleted(); break;
       case "turn-completed": await handleTurnCompleted(); break;
       case "sessionlog-sync": await handleSessionlogSync(); break;
+      case "subagent-start": await handleSubagentStart(); break;
+      case "subagent-stop": await handleSubagentStop(); break;
+      case "teammate-idle": await handleTeammateIdle(); break;
+      case "task-completed": await handleTaskCompleted(); break;
       default:
         process.stderr.write(`[map-hook] Unknown action: ${action}\n`);
     }

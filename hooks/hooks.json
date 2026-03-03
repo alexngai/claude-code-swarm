@@ -58,6 +58,50 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" subagent-start; fi"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" subagent-stop; fi"
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" teammate-idle; fi"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" task-completed; fi"
+          }
+        ]
+      }
     ]
   }
 }
