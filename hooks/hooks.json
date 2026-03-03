@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd || echo \".\"); node \"$PLUGIN_DIR/scripts/bootstrap.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.mjs\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd); node \"$PLUGIN_DIR/scripts/map-hook.mjs\" inject; fi"
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" inject; fi"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd); node \"$PLUGIN_DIR/scripts/map-hook.mjs\" agent-spawning; fi"
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" agent-spawning; fi"
           }
         ]
       }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd); node \"$PLUGIN_DIR/scripts/map-hook.mjs\" agent-completed; fi"
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" agent-completed; fi"
           }
         ]
       }
@@ -50,11 +50,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd); node \"$PLUGIN_DIR/scripts/map-hook.mjs\" turn-completed; fi"
+            "command": "if [ -f .claude-swarm.json ] && node -e \"process.exit(JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map?.enabled?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" turn-completed; fi"
           },
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')); process.exit(c.map?.enabled && c.sessionlog?.sync && c.sessionlog.sync!=='off' ? 0 : 1)\" 2>/dev/null; then PLUGIN_DIR=$(cd \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/..\" 2>/dev/null && pwd); node \"$PLUGIN_DIR/scripts/map-hook.mjs\" sessionlog-sync; fi"
+            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')); process.exit(c.map?.enabled && c.sessionlog?.sync && c.sessionlog.sync!=='off' ? 0 : 1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" sessionlog-sync; fi"
           }
         ]
       }

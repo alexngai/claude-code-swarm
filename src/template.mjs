@@ -35,7 +35,7 @@ export function resolveTemplatePath(nameOrPath, pluginDirOverride) {
   const openteamsBin = resolveOpenteamsBin(dir);
   if (openteamsBin) {
     try {
-      const output = execSync(`"${openteamsBin}" template list --json`, {
+      const output = execSync(`${openteamsBin} template list --json`, {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
       });
@@ -118,7 +118,7 @@ export function generateTeamArtifacts(templatePath, outputDir = GENERATED_DIR) {
 
   try {
     fs.mkdirSync(outputDir, { recursive: true });
-    execSync(`"${openteamsBin}" generate all "${templatePath}" -o "${outputDir}"`, {
+    execSync(`${openteamsBin} generate all "${templatePath}" -o "${outputDir}"`, {
       stdio: ["ignore", "ignore", "pipe"],
     });
 
@@ -142,11 +142,23 @@ export function generateTeamArtifacts(templatePath, outputDir = GENERATED_DIR) {
 }
 
 /**
- * Resolve the openteams binary — prefer local node_modules, fall back to global.
+ * Build the shell command prefix for running the openteams CLI.
+ * Returns a string ready to be used as: `${prefix} generate all ...`
+ * Returns null if openteams is not available.
+ *
+ * Resolution order:
+ * 1. node_modules/.bin/openteams (standard npm bin link)
+ * 2. node_modules/openteams/dist/cjs/cli.js (fallback for broken bin entries)
+ * 3. Global openteams binary
  */
 function resolveOpenteamsBin(pluginDirPath) {
   const localBin = path.join(pluginDirPath, "node_modules", ".bin", "openteams");
-  if (fs.existsSync(localBin)) return localBin;
+  if (fs.existsSync(localBin)) return `"${localBin}"`;
+
+  // Fallback: the openteams package may have a broken bin entry (dist/cli.js missing)
+  // but the actual CLI exists at dist/cjs/cli.js
+  const cjsCli = path.join(pluginDirPath, "node_modules", "openteams", "dist", "cjs", "cli.js");
+  if (fs.existsSync(cjsCli)) return `node "${cjsCli}"`;
 
   try {
     execSync("which openteams", { stdio: "ignore" });
