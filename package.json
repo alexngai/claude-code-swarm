@@ -1,6 +1,6 @@
 {
   "name": "claude-code-swarm",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Claude Code plugin for launching agent teams from openteams topologies with MAP observability",
   "type": "module",
   "private": true,
@@ -38,9 +38,9 @@
     "test:e2e:tier2": "vitest run --config e2e/vitest.config.e2e.mjs -t tier2",
     "test:e2e:tier3": "vitest run --config e2e/vitest.config.e2e.mjs -t tier3",
     "test:e2e:tier4": "vitest run --config e2e/vitest.config.e2e.mjs -t tier4",
-    "version:patch": "npm version patch --no-git-tag-version && node -e \"const fs=require('fs');const p=require('./package.json');const f='.claude-plugin/plugin.json';const j=JSON.parse(fs.readFileSync(f));j.version=p.version;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')\"",
-    "version:minor": "npm version minor --no-git-tag-version && node -e \"const fs=require('fs');const p=require('./package.json');const f='.claude-plugin/plugin.json';const j=JSON.parse(fs.readFileSync(f));j.version=p.version;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')\"",
-    "version:major": "npm version major --no-git-tag-version && node -e \"const fs=require('fs');const p=require('./package.json');const f='.claude-plugin/plugin.json';const j=JSON.parse(fs.readFileSync(f));j.version=p.version;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')\""
+    "version:patch": "npm version patch --no-git-tag-version && node scripts/sync-version.mjs",
+    "version:minor": "npm version minor --no-git-tag-version && node scripts/sync-version.mjs",
+    "version:major": "npm version major --no-git-tag-version && node scripts/sync-version.mjs"
   },
   "engines": {
     "node": ">=18.0.0"
