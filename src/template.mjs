@@ -112,7 +112,7 @@ export function generateTeamArtifacts(templatePath, outputDir = GENERATED_DIR) {
     return {
       success: false,
       teamName: "",
-      error: "openteams not found. Run: npm install in the plugin directory.",
+      error: "openteams not found. Run: swarmkit add openteams",
     };
   }
 
@@ -147,25 +147,28 @@ export function generateTeamArtifacts(templatePath, outputDir = GENERATED_DIR) {
  * Returns null if openteams is not available.
  *
  * Resolution order:
- * 1. node_modules/.bin/openteams (standard npm bin link)
- * 2. node_modules/openteams/dist/cjs/cli.js (fallback for broken bin entries)
- * 3. Global openteams binary
+ * 1. Global openteams binary (primary path with swarmkit management)
+ * 2. node_modules/.bin/openteams (local fallback)
+ * 3. node_modules/openteams/dist/cjs/cli.js (legacy fallback)
  */
 function resolveOpenteamsBin(pluginDirPath) {
-  const localBin = path.join(pluginDirPath, "node_modules", ".bin", "openteams");
-  if (fs.existsSync(localBin)) return `"${localBin}"`;
-
-  // Fallback: the openteams package may have a broken bin entry (dist/cli.js missing)
-  // but the actual CLI exists at dist/cjs/cli.js
-  const cjsCli = path.join(pluginDirPath, "node_modules", "openteams", "dist", "cjs", "cli.js");
-  if (fs.existsSync(cjsCli)) return `node "${cjsCli}"`;
-
+  // 1. Global binary (expected path when installed via swarmkit)
   try {
     execSync("which openteams", { stdio: "ignore" });
     return "openteams";
   } catch {
-    return null;
+    // Not globally installed
   }
+
+  // 2. Local bin fallback
+  const localBin = path.join(pluginDirPath, "node_modules", ".bin", "openteams");
+  if (fs.existsSync(localBin)) return `"${localBin}"`;
+
+  // 3. Legacy fallback for broken bin entries
+  const cjsCli = path.join(pluginDirPath, "node_modules", "openteams", "dist", "cjs", "cli.js");
+  if (fs.existsSync(cjsCli)) return `node "${cjsCli}"`;
+
+  return null;
 }
 
 /**

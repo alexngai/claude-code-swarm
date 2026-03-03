@@ -82,5 +82,13 @@ export {
   generateAllAgents,
 } from "./agent-generator.mjs";
 
+// Swarmkit resolver
+export {
+  getGlobalPrefix,
+  getGlobalNodeModules,
+  configureNodePath,
+  resolveSwarmkit,
+} from "./swarmkit-resolver.mjs";
+
 // Bootstrap
 export { bootstrap } from "./bootstrap.mjs";

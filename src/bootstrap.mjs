@@ -1,8 +1,9 @@
 /**
  * bootstrap.mjs — SessionStart orchestration for claude-code-swarm
  *
- * Replaces bootstrap.sh: reads config, installs deps, checks integrations,
- * starts MAP sidecar if configured, runs initial sessionlog sync.
+ * Reads config, installs local deps (js-yaml, swarmkit), ensures global
+ * packages via swarmkit (openteams, MAP SDK, sessionlog), starts MAP
+ * sidecar if configured, runs initial sessionlog sync.
  * Returns context object for formatting.
  */
 
@@ -12,12 +13,14 @@ import { readConfig, resolveScope } from "./config.mjs";
 import { SOCKET_PATH, PID_PATH, MAP_DIR, SIDECAR_LOG_PATH, pluginDir } from "./paths.mjs";
 import { killSidecar, startSidecar } from "./sidecar-client.mjs";
 import { checkSessionlogStatus, syncSessionlog } from "./sessionlog.mjs";
+import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
 
 /**
- * Install plugin dependencies if not already present.
- * Runs npm install --production in the plugin directory.
+ * Install plugin-local dependencies if not already present.
+ * Installs js-yaml and swarmkit (bundled). Still needed for
+ * the plugin's own code dependencies.
  */
-function installDeps(dir) {
+function installLocalDeps(dir) {
   const nodeModules = `${dir}/node_modules`;
   if (fs.existsSync(nodeModules)) return;
 
@@ -29,6 +32,72 @@ function installDeps(dir) {
     });
   } catch (err) {
     process.stderr.write(`Warning: npm install failed: ${err.message}\n`);
+  }
+}
+
+/**
+ * Determine which packages need to be installed globally based on config.
+ * openteams is always needed; MAP SDK and sessionlog are conditional.
+ */
+function getRequiredGlobalPackages(config) {
+  const packages = ["openteams"];
+  if (config.map.enabled) {
+    packages.push("multi-agent-protocol"); // swarmkit registry key
+  }
+  if (config.sessionlog.enabled) {
+    packages.push("sessionlog");
+  }
+  return packages;
+}
+
+/**
+ * Ensure required packages are installed globally via swarmkit.
+ * Checks versions first — only installs what's missing.
+ * Best-effort: warnings to stderr, never blocks the session.
+ */
+async function ensureGlobalPackages(config) {
+  const swarmkit = await resolveSwarmkit();
+  if (!swarmkit) {
+    process.stderr.write("[bootstrap] swarmkit not available, skipping global package check\n");
+    return;
+  }
+
+  const required = getRequiredGlobalPackages(config);
+  const missing = [];
+
+  for (const pkg of required) {
+    try {
+      const version = await swarmkit.getInstalledVersion(pkg);
+      if (!version) {
+        missing.push(pkg);
+      }
+    } catch {
+      missing.push(pkg);
+    }
+  }
+
+  if (missing.length === 0) return;
+
+  process.stderr.write(`[bootstrap] Installing missing packages: ${missing.join(", ")}...\n`);
+  try {
+    const results = await swarmkit.installPackages(missing);
+    for (const r of results) {
+      if (r.success) {
+        process.stderr.write(`[bootstrap] Installed ${r.package}@${r.version}\n`);
+      } else {
+        process.stderr.write(`[bootstrap] Warning: failed to install ${r.package}: ${r.error}\n`);
+      }
+    }
+    const installed = results.filter((r) => r.success).map((r) => r.package);
+    if (installed.length > 0) {
+      try {
+        swarmkit.addInstalledPackages(installed);
+      } catch {
+        // Non-critical — swarmkit config may not be writable
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`[bootstrap] Warning: global package install failed: ${err.message}\n`);
   }
 }
 
@@ -65,17 +134,18 @@ function checkPersistentSidecar(scope) {
 export async function bootstrap(pluginDirOverride) {
   const dir = pluginDirOverride || pluginDir();
 
-  // 0. Install dependencies
-  installDeps(dir);
+  // 0. Install local dependencies (js-yaml, swarmkit)
+  installLocalDeps(dir);
 
-  // Set NODE_PATH so plugin-local modules are resolvable
-  const nodeModulesPath = `${dir}/node_modules`;
-  process.env.NODE_PATH = process.env.NODE_PATH
-    ? `${nodeModulesPath}:${process.env.NODE_PATH}`
-    : nodeModulesPath;
-
-  // 1. Read config
+  // 1. Read config (before ensureGlobalPackages so we know what's needed)
   const config = readConfig();
+
+  // 1b. Configure NODE_PATH (global + local node_modules)
+  configureNodePath(dir);
+
+  // 1c. Ensure global packages are installed via swarmkit (async, best-effort)
+  await ensureGlobalPackages(config);
+
   const scope = resolveScope(config);
 
   // 2. Check sessionlog status

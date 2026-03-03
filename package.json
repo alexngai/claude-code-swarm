@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "js-yaml": "^4.1.0",
-    "openteams": "^0.2.1"
+    "swarmkit": "^0.0.2"
   },
   "peerDependencies": {
     "@multi-agent-protocol/sdk": "^0.1.1"

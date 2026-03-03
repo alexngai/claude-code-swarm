@@ -32,10 +32,22 @@ vi.mock("../paths.mjs", async () => {
   };
 });
 
-// Mock child_process for installDeps
+// Mock child_process for installLocalDeps
 vi.mock("child_process", () => ({
   execSync: vi.fn(),
   spawn: vi.fn(),
+}));
+
+// Mock swarmkit-resolver
+const mockSwarmkit = {
+  getInstalledVersion: vi.fn().mockResolvedValue("1.0.0"),
+  installPackages: vi.fn().mockResolvedValue([]),
+  addInstalledPackages: vi.fn(),
+};
+
+vi.mock("../swarmkit-resolver.mjs", () => ({
+  resolveSwarmkit: vi.fn().mockResolvedValue(mockSwarmkit),
+  configureNodePath: vi.fn(),
 }));
 
 const { bootstrap } = await import("../bootstrap.mjs");
@@ -43,12 +55,17 @@ const { readConfig } = await import("../config.mjs");
 const { killSidecar, startSidecar } = await import("../sidecar-client.mjs");
 const { checkSessionlogStatus, syncSessionlog } = await import("../sessionlog.mjs");
 const { pluginDir } = await import("../paths.mjs");
+const { resolveSwarmkit, configureNodePath } = await import("../swarmkit-resolver.mjs");
 
 describe("bootstrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: config with no MAP, no sessionlog
     readConfig.mockReturnValue(makeConfig());
+    // Default: swarmkit available with all packages installed
+    resolveSwarmkit.mockResolvedValue(mockSwarmkit);
+    mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+    mockSwarmkit.installPackages.mockResolvedValue([]);
   });
 
   it("returns complete context object", async () => {
@@ -147,6 +164,106 @@ describe("bootstrap", () => {
       readConfig.mockReturnValue(makeConfig({ mapEnabled: true, sessionlogSync: "off" }));
       await bootstrap();
       expect(syncSessionlog).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("swarmkit integration", () => {
+    it("configures NODE_PATH during bootstrap", async () => {
+      await bootstrap();
+      expect(configureNodePath).toHaveBeenCalled();
+    });
+
+    it("resolves swarmkit and checks packages", async () => {
+      await bootstrap();
+      expect(resolveSwarmkit).toHaveBeenCalled();
+      // openteams is always checked
+      expect(mockSwarmkit.getInstalledVersion).toHaveBeenCalledWith("openteams");
+    });
+
+    it("does not install when all packages are present", async () => {
+      mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+      await bootstrap();
+      expect(mockSwarmkit.installPackages).not.toHaveBeenCalled();
+    });
+
+    it("installs missing packages", async () => {
+      mockSwarmkit.getInstalledVersion.mockResolvedValue(null);
+      mockSwarmkit.installPackages.mockResolvedValue([
+        { package: "openteams", success: true, version: "0.2.1" },
+      ]);
+      await bootstrap();
+      expect(mockSwarmkit.installPackages).toHaveBeenCalledWith(
+        expect.arrayContaining(["openteams"])
+      );
+    });
+
+    it("records installed packages in swarmkit", async () => {
+      mockSwarmkit.getInstalledVersion.mockResolvedValue(null);
+      mockSwarmkit.installPackages.mockResolvedValue([
+        { package: "openteams", success: true, version: "0.2.1" },
+      ]);
+      await bootstrap();
+      expect(mockSwarmkit.addInstalledPackages).toHaveBeenCalledWith(["openteams"]);
+    });
+
+    it("handles swarmkit unavailable gracefully", async () => {
+      resolveSwarmkit.mockResolvedValue(null);
+      const result = await bootstrap();
+      // Should still return valid context, not throw
+      expect(result).toHaveProperty("template");
+      expect(mockSwarmkit.getInstalledVersion).not.toHaveBeenCalled();
+    });
+
+    it("checks MAP SDK only when MAP is enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ mapEnabled: true }));
+      mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+      await bootstrap();
+      expect(mockSwarmkit.getInstalledVersion).toHaveBeenCalledWith("multi-agent-protocol");
+    });
+
+    it("does not check MAP SDK when MAP is disabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ mapEnabled: false }));
+      mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+      await bootstrap();
+      const calls = mockSwarmkit.getInstalledVersion.mock.calls.map((c) => c[0]);
+      expect(calls).not.toContain("multi-agent-protocol");
+    });
+
+    it("checks sessionlog only when sessionlog is enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: true }));
+      mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+      await bootstrap();
+      expect(mockSwarmkit.getInstalledVersion).toHaveBeenCalledWith("sessionlog");
+    });
+
+    it("does not check sessionlog when sessionlog is disabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: false }));
+      mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+      await bootstrap();
+      const calls = mockSwarmkit.getInstalledVersion.mock.calls.map((c) => c[0]);
+      expect(calls).not.toContain("sessionlog");
+    });
+
+    it("installs all missing packages when MAP and sessionlog are enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ mapEnabled: true, sessionlogEnabled: true }));
+      mockSwarmkit.getInstalledVersion.mockResolvedValue(null);
+      mockSwarmkit.installPackages.mockResolvedValue([
+        { package: "openteams", success: true, version: "0.2.1" },
+        { package: "multi-agent-protocol", success: true, version: "0.1.1" },
+        { package: "sessionlog", success: true, version: "0.1.0" },
+      ]);
+      await bootstrap();
+      expect(mockSwarmkit.installPackages).toHaveBeenCalledWith(
+        expect.arrayContaining(["openteams", "multi-agent-protocol", "sessionlog"])
+      );
+    });
+
+    it("continues bootstrap even when install fails", async () => {
+      mockSwarmkit.getInstalledVersion.mockResolvedValue(null);
+      mockSwarmkit.installPackages.mockRejectedValue(new Error("npm failed"));
+      const result = await bootstrap();
+      // Should still return valid context
+      expect(result).toHaveProperty("template");
     });
   });
 });
