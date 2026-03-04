@@ -1,8 +1,0 @@
-name: planner
-display_name: GSD Planner
-description: "Decomposes phases into 2-3 parallel tasks with dependency graphs. Applies goal-backward methodology. Sizes tasks for 15-60 min agent execution. Produces PLAN.md."
-capabilities:
-  - task-decomposition
-  - dependency-analysis
-  - goal-backward-planning
-  - vertical-slice-design

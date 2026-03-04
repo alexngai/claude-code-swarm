@@ -18,15 +18,6 @@ describe("template", () => {
       expect(result).toBe(dir);
     });
 
-    it("resolves built-in 'get-shit-done' template", () => {
-      const result = resolveTemplatePath("get-shit-done");
-      if (result) {
-        expect(result).toContain("templates");
-        expect(result).toContain("get-shit-done");
-      }
-      // May be null if templates dir doesn't exist in test env
-    });
-
     it("returns null when template is not found", () => {
       const result = resolveTemplatePath("nonexistent-template-12345");
       expect(result).toBeNull();
@@ -41,9 +32,13 @@ describe("template", () => {
   });
 
   describe("listAvailableTemplates", () => {
-    it("lists templates with names, descriptions, and paths", () => {
+    it("returns an array", () => {
       const templates = listAvailableTemplates();
-      // Should find at least the built-in templates
+      expect(Array.isArray(templates)).toBe(true);
+    });
+
+    it("templates have name, description, and path when available", () => {
+      const templates = listAvailableTemplates();
       if (templates.length > 0) {
         expect(templates[0]).toHaveProperty("name");
         expect(templates[0]).toHaveProperty("description");
@@ -51,7 +46,8 @@ describe("template", () => {
       }
     });
 
-    it("returns empty array when templates dir does not exist", () => {
+    it("returns empty array when openteams is not available", () => {
+      // Pass a fake plugin dir where no openteams binary exists
       const result = listAvailableTemplates(path.join(tmpDir, "nope"));
       expect(result).toEqual([]);
     });

@@ -21,12 +21,14 @@ export function killByPidFile(pidPath) {
  * Clean up generated artifacts and sidecar processes in a workspace.
  */
 export function cleanupWorkspace(dir) {
-  const pidPath = path.join(dir, ".generated", "map", "sidecar.pid");
+  // Kill MAP sidecar if running
+  const pidPath = path.join(dir, ".swarm", "claude-swarm", "tmp", "map", "sidecar.pid");
   killByPidFile(pidPath);
 
-  const genDir = path.join(dir, ".generated");
+  // Remove all generated/tmp artifacts
+  const tmpDir = path.join(dir, ".swarm", "claude-swarm", "tmp");
   try {
-    fs.rmSync(genDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   } catch {
     // ignore
   }

@@ -1,8 +1,0 @@
-name: integration-checker
-display_name: GSD Integration Checker
-description: "Cross-phase verification. Ensures exports are imported, APIs are consumed, E2E flows are connected. Catches integration gaps between independently developed phases."
-capabilities:
-  - cross-phase-verification
-  - api-contract-validation
-  - e2e-flow-verification
-  - integration-gap-detection

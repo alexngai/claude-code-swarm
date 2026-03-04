@@ -30,10 +30,12 @@ export function createWorkspace(options = {}) {
     execSync('git config user.name "Test"', { cwd: dir, stdio: "ignore" });
   }
 
-  // Write .claude-swarm.json if config provided
+  // Write .swarm/claude-swarm/config.json if config provided
   if (config !== undefined) {
+    const pluginDir = path.join(dir, ".swarm", "claude-swarm");
+    fs.mkdirSync(pluginDir, { recursive: true });
     fs.writeFileSync(
-      path.join(dir, ".claude-swarm.json"),
+      path.join(pluginDir, "config.json"),
       JSON.stringify(config, null, 2)
     );
   }

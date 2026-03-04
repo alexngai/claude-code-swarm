@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" inject; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" inject; fi"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" agent-spawning; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" agent-spawning; fi"
           }
         ]
       }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" agent-completed; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" agent-completed; fi"
           }
         ]
       }
@@ -50,11 +50,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" turn-completed; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" turn-completed; fi"
           },
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8'));const m=c.map||{};process.exit((m.enabled||m.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED)&&c.sessionlog?.sync&&c.sessionlog.sync!=='off'?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" sessionlog-sync; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8'));const m=c.map||{};process.exit((m.enabled||m.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED)&&c.sessionlog?.sync&&c.sessionlog.sync!=='off'?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" sessionlog-sync; fi"
           }
         ]
       }
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" subagent-start; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" subagent-start; fi"
           }
         ]
       }
@@ -76,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" subagent-stop; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" subagent-stop; fi"
           }
         ]
       }
@@ -87,7 +87,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" teammate-idle; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" teammate-idle; fi"
           }
         ]
       }
@@ -98,7 +98,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -f .claude-swarm.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.claude-swarm.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" task-completed; fi"
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" task-completed; fi"
           }
         ]
       }

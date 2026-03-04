@@ -82,9 +82,9 @@ describe.skipIf(!CLI_AVAILABLE)(
       expect(agentCalls.some((ac) => ac.team_name)).toBe(true);
     });
 
-    it("generates artifacts in .generated/ directory", () => {
-      const workspaceGen = path.join(workspace.dir, ".generated");
-      const pluginGen = path.join(PLUGIN_DIR, ".generated");
+    it("generates artifacts in .swarm/claude-swarm/tmp/teams/ directory", () => {
+      const workspaceGen = path.join(workspace.dir, ".swarm", "claude-swarm", "tmp", "teams");
+      const pluginGen = path.join(PLUGIN_DIR, ".swarm", "claude-swarm", "tmp", "teams");
 
       const hasGenerated =
         (fs.existsSync(workspaceGen) &&

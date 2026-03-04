@@ -44,7 +44,7 @@ export function formatBootstrapContext({
   lines.push(
     "Use `/swarm` to launch the team (creates a native Claude Code team)."
   );
-  lines.push("Built-in templates: **get-shit-done**, **bmad-method**");
+  lines.push("Templates available via openteams: **get-shit-done**, **bmad-method** (and more)");
   lines.push("");
 
   return lines.join("\n");
@@ -117,7 +117,7 @@ export function formatNoTemplateMessage(templates) {
   const lines = [
     "## Claude Code Swarm",
     "",
-    "No team template configured. Use `/swarm` to launch a team, or create a `.claude-swarm.json` in your project:",
+    "No team template configured. Use `/swarm` to launch a team, or create `.swarm/claude-swarm/config.json` in your project:",
     "",
     "```json",
     "{",
@@ -125,7 +125,7 @@ export function formatNoTemplateMessage(templates) {
     "}",
     "```",
     "",
-    "Available built-in templates:",
+    "Available templates (via openteams):",
   ];
 
   for (const t of templates) {

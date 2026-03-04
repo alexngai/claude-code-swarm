@@ -63,7 +63,9 @@ describe.skipIf(!CLI_AVAILABLE)(
 
       const pidPath = path.join(
         workspace.dir,
-        ".generated",
+        ".swarm",
+        "claude-swarm",
+        "tmp",
         "map",
         "sidecar.pid"
       );
@@ -158,7 +160,9 @@ describe.skipIf(!CLI_AVAILABLE)(
 
       const pidPath = path.join(
         workspace.dir,
-        ".generated",
+        ".swarm",
+        "claude-swarm",
+        "tmp",
         "map",
         "sidecar.pid"
       );

@@ -24,10 +24,17 @@ vi.mock("../paths.mjs", async () => {
     (await import("path")).join((await import("os")).tmpdir(), "bootstrap-test-")
   );
   return {
+    SWARM_DIR: path.join(tmpDir, ".swarm", "claude-swarm"),
+    CONFIG_PATH: path.join(tmpDir, ".swarm", "claude-swarm", "config.json"),
+    TMP_DIR: path.join(tmpDir, ".swarm", "claude-swarm", "tmp"),
+    TEAMS_DIR: path.join(tmpDir, ".swarm", "claude-swarm", "tmp", "teams"),
     SOCKET_PATH: path.join(tmpDir, "sidecar.sock"),
     PID_PATH: path.join(tmpDir, "sidecar.pid"),
     MAP_DIR: path.join(tmpDir, "map"),
     SIDECAR_LOG_PATH: path.join(tmpDir, "sidecar.log"),
+    teamDir: vi.fn((name) => `${tmpDir}/.swarm/claude-swarm/tmp/teams/${name}`),
+    ensureSwarmDir: vi.fn(),
+    ensureMapDir: vi.fn(),
     pluginDir: vi.fn(() => tmpDir),
   };
 });
@@ -43,6 +50,8 @@ const mockSwarmkit = {
   getInstalledVersion: vi.fn().mockResolvedValue("1.0.0"),
   installPackages: vi.fn().mockResolvedValue([]),
   addInstalledPackages: vi.fn(),
+  isProjectInit: vi.fn().mockReturnValue(false),
+  initProjectPackage: vi.fn().mockResolvedValue({ package: "openteams", success: true }),
 };
 
 vi.mock("../swarmkit-resolver.mjs", () => ({
@@ -66,6 +75,8 @@ describe("bootstrap", () => {
     resolveSwarmkit.mockResolvedValue(mockSwarmkit);
     mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
     mockSwarmkit.installPackages.mockResolvedValue([]);
+    mockSwarmkit.isProjectInit.mockReturnValue(false);
+    mockSwarmkit.initProjectPackage.mockResolvedValue({ package: "openteams", success: true });
   });
 
   it("returns complete context object", async () => {
@@ -263,6 +274,59 @@ describe("bootstrap", () => {
       mockSwarmkit.installPackages.mockRejectedValue(new Error("npm failed"));
       const result = await bootstrap();
       // Should still return valid context
+      expect(result).toHaveProperty("template");
+    });
+  });
+
+  describe("swarmkit project init", () => {
+    it("calls initProjectPackage for openteams when not initialized", async () => {
+      mockSwarmkit.isProjectInit.mockReturnValue(false);
+      await bootstrap();
+      expect(mockSwarmkit.initProjectPackage).toHaveBeenCalledWith(
+        "openteams",
+        expect.objectContaining({ usePrefix: true })
+      );
+    });
+
+    it("skips initProjectPackage when already initialized", async () => {
+      mockSwarmkit.isProjectInit.mockReturnValue(true);
+      await bootstrap();
+      expect(mockSwarmkit.initProjectPackage).not.toHaveBeenCalled();
+    });
+
+    it("initializes sessionlog when sessionlog is enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: true }));
+      mockSwarmkit.isProjectInit.mockReturnValue(false);
+      await bootstrap();
+      expect(mockSwarmkit.initProjectPackage).toHaveBeenCalledWith(
+        "sessionlog",
+        expect.objectContaining({ usePrefix: true })
+      );
+    });
+
+    it("does not initialize sessionlog when disabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: false }));
+      mockSwarmkit.isProjectInit.mockReturnValue(false);
+      await bootstrap();
+      const calls = mockSwarmkit.initProjectPackage.mock.calls.map((c) => c[0]);
+      expect(calls).not.toContain("sessionlog");
+    });
+
+    it("continues bootstrap when project init fails", async () => {
+      mockSwarmkit.isProjectInit.mockReturnValue(false);
+      mockSwarmkit.initProjectPackage.mockRejectedValue(new Error("init failed"));
+      const result = await bootstrap();
+      expect(result).toHaveProperty("template");
+    });
+
+    it("skips project init when swarmkit lacks init functions", async () => {
+      resolveSwarmkit.mockResolvedValue({
+        getInstalledVersion: vi.fn().mockResolvedValue("1.0.0"),
+        installPackages: vi.fn().mockResolvedValue([]),
+        addInstalledPackages: vi.fn(),
+        // No isProjectInit or initProjectPackage
+      });
+      const result = await bootstrap();
       expect(result).toHaveProperty("template");
     });
   });

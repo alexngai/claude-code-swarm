@@ -1,20 +1,21 @@
 /**
  * template.mjs — Template resolution and artifact generation for claude-code-swarm
  *
- * Resolves team template paths and runs openteams to generate agent definitions.
+ * Resolves team template paths via openteams and runs openteams to generate agent definitions.
+ * Templates are provided by the openteams package (installed via swarmkit), not bundled.
  */
 
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import { createRequire } from "module";
-import { GENERATED_DIR, pluginDir } from "./paths.mjs";
+import { pluginDir } from "./paths.mjs";
 
 const require = createRequire(import.meta.url);
 
 /**
  * Resolve a template name or path to an absolute directory path.
- * Resolution priority: direct path → built-in templates → openteams registry.
+ * Resolution priority: direct path → openteams registry.
  * Returns null if not found.
  */
 export function resolveTemplatePath(nameOrPath, pluginDirOverride) {
@@ -25,13 +26,7 @@ export function resolveTemplatePath(nameOrPath, pluginDirOverride) {
     return path.resolve(nameOrPath);
   }
 
-  // Built-in templates
-  const builtinPath = path.join(dir, "templates", nameOrPath);
-  if (fs.existsSync(builtinPath) && fs.statSync(builtinPath).isDirectory()) {
-    return builtinPath;
-  }
-
-  // openteams registry
+  // openteams registry (includes get-shit-done, bmad-method, and more)
   const openteamsBin = resolveOpenteamsBin(dir);
   if (openteamsBin) {
     try {
@@ -53,36 +48,31 @@ export function resolveTemplatePath(nameOrPath, pluginDirOverride) {
 }
 
 /**
- * List available built-in templates with their descriptions.
+ * List available templates from the openteams registry.
+ * Returns array of { name, description, path }.
  */
 export function listAvailableTemplates(pluginDirOverride) {
   const dir = pluginDirOverride || pluginDir();
-  const templatesDir = path.join(dir, "templates");
+  const openteamsBin = resolveOpenteamsBin(dir);
   const templates = [];
 
-  try {
-    for (const entry of fs.readdirSync(templatesDir)) {
-      const teamYaml = path.join(templatesDir, entry, "team.yaml");
-      if (!fs.existsSync(teamYaml)) continue;
-
-      let description = "No description";
-      try {
-        const manifest = readTeamManifest(
-          path.join(templatesDir, entry)
-        );
-        description = manifest.description || description;
-      } catch {
-        // Use default description
-      }
-
-      templates.push({
-        name: entry,
-        description,
-        path: path.join(templatesDir, entry),
+  if (openteamsBin) {
+    try {
+      const output = execSync(`${openteamsBin} template list --json`, {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
       });
+      const data = JSON.parse(output);
+      for (const t of data) {
+        templates.push({
+          name: t.name,
+          description: t.description || "No description",
+          path: t.path,
+        });
+      }
+    } catch {
+      // openteams not available
     }
-  } catch {
-    // Templates dir doesn't exist
   }
 
   return templates;
@@ -102,9 +92,10 @@ export function readTeamManifest(templatePath) {
 
 /**
  * Generate team artifacts using openteams CLI.
+ * outputDir is required — callers should use teamDir(templateName) from paths.mjs.
  * Returns { success, teamName, error? }.
  */
-export function generateTeamArtifacts(templatePath, outputDir = GENERATED_DIR) {
+export function generateTeamArtifacts(templatePath, outputDir) {
   const dir = pluginDir();
   const openteamsBin = resolveOpenteamsBin(dir);
 

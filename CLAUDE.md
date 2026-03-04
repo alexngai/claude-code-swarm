@@ -6,11 +6,11 @@ Claude Code plugin that launches agent teams from openteams YAML topologies, usi
 
 This plugin bridges [openteams](https://github.com/alexngai/openteams) team templates with Claude Code's native agent teams. It provides:
 
-1. **SessionStart hook** (`scripts/bootstrap.mjs`) — Reads `.claude-swarm.json`, installs deps, starts MAP sidecar if configured, and injects team context
+1. **SessionStart hook** (`scripts/bootstrap.mjs`) — Reads `.swarm/claude-swarm/config.json`, installs deps, initializes swarmkit project packages, starts MAP sidecar if configured, and injects team context
 2. **MAP integration** (`scripts/map-sidecar.mjs`, `scripts/map-hook.mjs`) — Persistent sidecar for external observability via MAP server (lifecycle events, agent registration)
 3. **`/swarm` skill** (`skills/swarm/SKILL.md`) — User-invocable skill to select a template, create a native Claude Code team via `TeamCreate`, and spawn a coordinator agent
 4. **Agent generator** (`scripts/generate-agents.mjs`) — Converts openteams YAML templates into Claude Code AGENT.md files with native team tool instructions
-5. **Team loader** (`scripts/team-loader.mjs`) — Resolves templates, generates artifacts, writes roles.json for MAP hook integration
+5. **Team loader** (`scripts/team-loader.mjs`) — Resolves templates, generates artifacts (with per-template caching), writes roles.json for MAP hook integration
 
 ## Plugin structure
 
@@ -22,7 +22,7 @@ claude-code-swarm/
 ├── src/                          # Core logic modules
 │   ├── index.mjs                 # Barrel re-export of public API
 │   ├── config.mjs                # Config parsing + defaults
-│   ├── paths.mjs                 # Path constants + ensureMapDir
+│   ├── paths.mjs                 # Path constants + ensureSwarmDir/ensureMapDir/teamDir
 │   ├── roles.mjs                 # Role reading, matching, writing roles.json
 │   ├── inbox.mjs                 # Inbox read/clear/format/write
 │   ├── map-connection.mjs        # MAP SDK connection + fire-and-forget
@@ -41,21 +41,39 @@ claude-code-swarm/
 │   ├── team-loader.mjs           # Template loading → src/template + src/roles
 │   └── generate-agents.mjs       # AGENT.md generation → src/agent-generator
 ├── skills/swarm/SKILL.md         # /swarm skill definition
-├── templates/                    # Bundled team topology templates
-│   ├── get-shit-done/            # GSD: wave-based parallel execution team
-│   └── bmad-method/              # BMAD: full agile development team
 ├── settings.json                 # Enables agent teams, allows openteams/node commands
 ├── docs/
 │   ├── design.md                 # Architecture design document
 │   └── implementation-plan.md    # Implementation phases and pseudocode
-└── .generated/                   # Generated artifacts (gitignored)
-    └── map/                      # MAP runtime files (inbox, socket, pid, roles)
+└── .swarm/                       # Swarm ecosystem directory (in user's project)
+    ├── openteams/                # openteams project config (initialized by swarmkit)
+    │   └── templates/
+    ├── sessionlog/               # sessionlog config (initialized by swarmkit, if enabled)
+    │   └── settings.json
+    └── claude-swarm/             # Plugin-specific (managed by this plugin)
+        ├── config.json           # Plugin config (template, MAP settings)
+        ├── .gitignore            # Ignores tmp/
+        └── tmp/                  # Generated runtime artifacts (gitignored)
+            ├── teams/            # Per-template artifact cache
+            │   ├── get-shit-done/
+            │   │   ├── SKILL.md
+            │   │   └── agents/
+            │   └── bmad-method/
+            │       ├── SKILL.md
+            │       └── agents/
+            └── map/              # MAP runtime state
+                ├── roles.json
+                ├── sidecar.sock
+                ├── inbox.jsonl
+                ├── sidecar.pid
+                ├── sidecar.log
+                └── sessionlog-state.json
 ```
 
 ## How to use
 
 ### Quick start
-1. Create `.claude-swarm.json` in your project root:
+1. Create `.swarm/claude-swarm/config.json` in your project:
    ```json
    { "template": "get-shit-done" }
    ```
@@ -64,7 +82,7 @@ claude-code-swarm/
 
 ### How launching works
 
-1. `/swarm` calls `openteams generate all` to produce role artifacts (SKILL.md per role)
+1. `/swarm` calls `openteams generate all` to produce role artifacts (SKILL.md per role) — cached per template in `.swarm/claude-swarm/tmp/teams/<template>/`
 2. `/swarm` calls `TeamCreate` to set up a native Claude Code team with shared task list
 3. `/swarm` spawns a **coordinator agent** (the topology's root role) with `team_name`
 4. The coordinator reads the topology and spawns companions/workers (all with `team_name`)
@@ -144,9 +162,13 @@ SWARM_MAP_SERVER=ws://map.ci.internal:8080 claude
 
 ### Team launch flow
 
-1. **SessionStart** → `scripts/bootstrap.mjs`: reads config, installs deps, starts MAP sidecar, outputs context
-2. **`/swarm`** → generates artifacts via `openteams generate all`, calls `TeamCreate`, spawns coordinator agent with `team_name`
+1. **SessionStart** → `scripts/bootstrap.mjs`: reads config, installs deps via swarmkit, initializes `.swarm/` project packages (openteams, sessionlog), starts MAP sidecar, outputs context
+2. **`/swarm`** → generates artifacts via `openteams generate all` (cached per template in `.swarm/claude-swarm/tmp/teams/<template>/`), calls `TeamCreate`, spawns coordinator agent with `team_name`
 3. **Coordinator** → reads topology, spawns companions/workers (all with `team_name`), creates tasks via `TaskCreate`, coordinates via `SendMessage`
+
+### Per-template caching
+
+Team artifacts are cached per template under `.swarm/claude-swarm/tmp/teams/<template-name>/` (gitignored via `.swarm/claude-swarm/.gitignore`). When switching between templates (e.g. from get-shit-done to bmad-method and back), previously generated artifacts are reused instantly. The cache is invalidated by deleting the template's directory.
 
 ### Runtime coordination
 
@@ -180,8 +202,8 @@ Hook dispatch:
 
 The sidecar (`scripts/map-sidecar.mjs`) is a persistent Node.js process that:
 - Connects to the MAP server via WebSocket with auto-reconnection
-- Listens on a UNIX socket (`.generated/map/sidecar.sock`) for commands from hooks
-- Writes incoming external MAP messages to `.generated/map/inbox.jsonl`
+- Listens on a UNIX socket (`.swarm/claude-swarm/tmp/map/sidecar.sock`) for commands from hooks
+- Writes incoming external MAP messages to `.swarm/claude-swarm/tmp/map/inbox.jsonl`
 - Manages agent lifecycle via SDK primitives: `conn.spawn()` for registration, `conn.callExtension("map/agents/unregister")` for deregistration, `conn.updateState()` for state changes
 - Sends task lifecycle as typed message payloads via `conn.send()`
 - Reports trajectory checkpoints via `trajectory/checkpoint` (with `trajectory.checkpoint` message fallback)
@@ -191,7 +213,7 @@ The hook helper (`scripts/map-hook.mjs`) includes best-effort auto-recovery: if 
 
 ### Agent registration
 
-Only topology-defined roles (from `team.yaml`) get full MAP agent registrations via `conn.spawn()`. Subagents are also spawned in MAP with `role: "subagent"` for observability. Role matching is done via `.generated/map/roles.json` written during team loading. All agent context (role, template, agentType, isTeamRole) goes into agent `metadata`.
+Only topology-defined roles (from `team.yaml`) get full MAP agent registrations via `conn.spawn()`. Subagents are also spawned in MAP with `role: "subagent"` for observability. Role matching is done via `.swarm/claude-swarm/tmp/map/roles.json` written during team loading. All agent context (role, template, agentType, isTeamRole) goes into agent `metadata`.
 
 ### Module architecture
 
@@ -199,7 +221,7 @@ All logic lives in `src/` as importable ES modules. Scripts in `scripts/` are th
 
 ```
 src/config.mjs          ← readConfig(), resolveScope(), resolveTeamName()
-src/paths.mjs            ← SOCKET_PATH, INBOX_PATH, PID_PATH, etc.
+src/paths.mjs            ← SWARM_DIR, CONFIG_PATH, TMP_DIR, TEAMS_DIR, MAP_DIR, teamDir()
 src/roles.mjs            ← readRoles(), matchRole(), writeRoles()
 src/inbox.mjs            ← readInbox(), clearInbox(), formatInboxAsMarkdown()
 src/map-connection.mjs   ← connectToMAP(), fireAndForget(), fireAndForgetTrajectory()
@@ -216,16 +238,23 @@ src/index.mjs            ← barrel re-export of public API
 
 ## Key dependencies
 
-Declared in `package.json` and installed automatically by the SessionStart hook (`npm install --production` in the plugin directory):
-- **openteams** — team topology parsing and artifact generation
+Local (installed via `npm install --production` in plugin directory):
+- **swarmkit** — bundled package manager for the swarm ecosystem (global package installation)
 - **js-yaml** — YAML parsing for template files
-- **@multi-agent-protocol/sdk** (optional peer dependency) — MAP protocol client, only needed when `map.enabled: true`
+
+Global (managed by swarmkit, installed on demand during bootstrap):
+- **openteams** — team topology parsing and artifact generation (always installed)
+- **@multi-agent-protocol/sdk** — MAP protocol client (installed when `map.enabled: true`)
+- **sessionlog** — git-integrated session capture (installed when `sessionlog.enabled: true`)
+
+Runtime:
 - **Claude Code agent teams** — enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings.json
 
 ## Development notes
-- Templates in `templates/` are copied from openteams' `examples/` directory
-- The generate-agents script has a fallback mode when openteams isn't installed (basic YAML parsing)
-- Generated artifacts go in `.generated/` which should be gitignored
+- Templates are provided by the openteams package (installed via swarmkit), not bundled with the plugin
+- `.swarm/` directory is managed by swarmkit for ecosystem packages (openteams, sessionlog) via `initProjectPackage()`
+- Plugin-specific state lives under `.swarm/claude-swarm/` (config, `.gitignore` ignoring `tmp/`). Runtime artifacts go in `.swarm/claude-swarm/tmp/` (per-template caches, MAP files)
+- Switching between templates is instant if previously cached — artifacts are stored per template in `.swarm/claude-swarm/tmp/teams/<template>/`
 - openteams is config/generation only — Claude Code native teams handle all runtime coordination, MAP handles external observability
 - All logic is in `src/` modules — scripts are thin wrappers, making functions importable and testable
 - See `docs/design.md` for detailed architecture decisions and `docs/implementation-plan.md` for phase breakdown

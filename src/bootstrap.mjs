@@ -10,7 +10,7 @@
 import fs from "fs";
 import { execSync } from "child_process";
 import { readConfig, resolveScope } from "./config.mjs";
-import { SOCKET_PATH, PID_PATH, MAP_DIR, SIDECAR_LOG_PATH, pluginDir } from "./paths.mjs";
+import { SOCKET_PATH, PID_PATH, MAP_DIR, SIDECAR_LOG_PATH, pluginDir, ensureSwarmDir } from "./paths.mjs";
 import { killSidecar, startSidecar } from "./sidecar-client.mjs";
 import { checkSessionlogStatus, syncSessionlog } from "./sessionlog.mjs";
 import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
@@ -102,6 +102,43 @@ async function ensureGlobalPackages(config) {
 }
 
 /**
+ * Initialize swarmkit project directories (.swarm/openteams/, .swarm/sessionlog/).
+ * Uses swarmkit's initProjectPackage() for packages that need project-level setup.
+ * Best-effort: warnings to stderr, never blocks the session.
+ */
+async function initSwarmProject(config) {
+  const swarmkit = await resolveSwarmkit();
+  if (!swarmkit || !swarmkit.isProjectInit || !swarmkit.initProjectPackage) return;
+
+  const cwd = process.cwd();
+  const ctx = {
+    cwd,
+    packages: getRequiredGlobalPackages(config),
+    embeddingProvider: null,
+    apiKeys: {},
+    usePrefix: true,
+  };
+
+  // Init openteams project dir (.swarm/openteams/)
+  if (!swarmkit.isProjectInit(cwd, "openteams")) {
+    try {
+      await swarmkit.initProjectPackage("openteams", ctx);
+    } catch {
+      // best-effort
+    }
+  }
+
+  // Init sessionlog project dir (.swarm/sessionlog/) if enabled
+  if (config.sessionlog.enabled && !swarmkit.isProjectInit(cwd, "sessionlog")) {
+    try {
+      await swarmkit.initProjectPackage("sessionlog", ctx);
+    } catch {
+      // best-effort
+    }
+  }
+}
+
+/**
  * Start the MAP sidecar in session mode.
  * Kills any existing sidecar first, then starts a new one.
  * Returns status string.
@@ -137,6 +174,9 @@ export async function bootstrap(pluginDirOverride) {
   // 0. Install local dependencies (js-yaml, swarmkit)
   installLocalDeps(dir);
 
+  // 0b. Ensure .swarm/ directory exists with .gitignore
+  ensureSwarmDir();
+
   // 1. Read config (before ensureGlobalPackages so we know what's needed)
   const config = readConfig();
 
@@ -145,6 +185,9 @@ export async function bootstrap(pluginDirOverride) {
 
   // 1c. Ensure global packages are installed via swarmkit (async, best-effort)
   await ensureGlobalPackages(config);
+
+  // 1d. Initialize swarmkit project directories (.swarm/openteams/, .swarm/sessionlog/)
+  await initSwarmProject(config);
 
   const scope = resolveScope(config);
 

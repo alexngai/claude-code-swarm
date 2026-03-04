@@ -21,7 +21,7 @@ The plugin directory is listed in the system init message under `plugins` (look 
 find ~/.claude/plugins -name "plugin.json" -path "*/claude-code-swarm/*" -exec dirname {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null
 ```
 
-The template name comes from `$ARGUMENTS` (e.g. `get-shit-done`). If none provided, ask the user. Built-in templates: **get-shit-done**, **bmad-method**.
+The template name comes from `$ARGUMENTS` (e.g. `get-shit-done`). If none provided, ask the user. Templates available via openteams: **get-shit-done**, **bmad-method** (and more).
 
 Generate artifacts with the team-loader script (this handles dependency resolution, artifact generation, and roles.json):
 
@@ -31,8 +31,8 @@ node "$PLUGIN_DIR/scripts/team-loader.mjs" "<template-name>"
 
 ### Step 2: Read the generated artifacts
 
-1. Read `.generated/SKILL.md` — the team catalog overview
-2. Read `.generated/agents/<root-role>.md` — the root agent's prompt (the root role is typically `orchestrator` for get-shit-done, `master` for bmad-method)
+1. Read `.swarm/claude-swarm/tmp/teams/<template-name>/SKILL.md` — the team catalog overview
+2. Read `.swarm/claude-swarm/tmp/teams/<template-name>/agents/<root-role>.md` — the root agent's prompt (the root role is typically `orchestrator` for get-shit-done, `master` for bmad-method)
 
 ### Step 3: Create the native team
 
@@ -56,7 +56,7 @@ Agent(
 ```
 
 The coordinator prompt should tell the agent to:
-- Spawn companion agents (with `team_name`) by reading their `.generated/agents/<role>.md`
+- Spawn companion agents (with `team_name`) by reading their `.swarm/claude-swarm/tmp/teams/<template-name>/agents/<role>.md`
 - Create tasks via `TaskCreate` based on the user's goal
 - Spawn additional agents on-demand per spawn_rules (always with `team_name`)
 - Coordinate via `SendMessage` and track progress via `TaskList`/`TaskUpdate`
@@ -68,4 +68,4 @@ The coordinator prompt should tell the agent to:
 - **openteams is config-only** — used only for artifact generation, NOT for runtime coordination
 - **Use Claude Code native teams** for all runtime: `TeamCreate`, `TaskCreate`, `TaskUpdate`, `SendMessage`
 - All agents must be spawned with `team_name` so they share the team's task list
-- If MAP is enabled in `.claude-swarm.json`, lifecycle events are handled automatically by hooks
+- If MAP is enabled in `.swarm/claude-swarm/config.json`, lifecycle events are handled automatically by hooks

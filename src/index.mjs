@@ -7,6 +7,7 @@ export { readConfig, resolveScope, resolveTeamName, DEFAULTS } from "./config.mj
 
 // Paths
 export {
+  SWARM_DIR,
   SOCKET_PATH,
   INBOX_PATH,
   PID_PATH,
@@ -14,9 +15,12 @@ export {
   SESSIONLOG_STATE_PATH,
   CONFIG_PATH,
   SESSIONLOG_DIR,
-  GENERATED_DIR,
+  TMP_DIR,
+  TEAMS_DIR,
   MAP_DIR,
   SIDECAR_LOG_PATH,
+  teamDir,
+  ensureSwarmDir,
   ensureMapDir,
   pluginDir,
 } from "./paths.mjs";

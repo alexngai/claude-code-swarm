@@ -1,11 +1,12 @@
 /**
  * config.mjs — Shared configuration parsing for claude-code-swarm
  *
- * Reads .claude-swarm.json and provides normalized config with defaults.
+ * Reads .swarm/claude/config.json and provides normalized config with defaults.
  * Used by bootstrap, hooks, sidecar, and team-loader.
  */
 
 import fs from "fs";
+import { CONFIG_PATH } from "./paths.mjs";
 
 export const DEFAULTS = {
   mapServer: "ws://localhost:8080",
@@ -33,11 +34,11 @@ function envStr(name) {
 }
 
 /**
- * Read and normalize .claude-swarm.json config.
+ * Read and normalize .swarm/claude/config.json config.
  * Priority: SWARM_* env vars > config file > defaults.
  * Never throws — returns defaults on any error.
  */
-export function readConfig(configPath = ".claude-swarm.json") {
+export function readConfig(configPath = CONFIG_PATH) {
   let raw = {};
   try {
     raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));

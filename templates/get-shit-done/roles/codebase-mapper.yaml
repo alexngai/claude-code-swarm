@@ -1,8 +1,0 @@
-name: codebase-mapper
-display_name: GSD Codebase Mapper
-description: "Structured codebase analysis. Spawned 4x in parallel with focus areas: technology, architecture, quality, and concerns. Outputs to .planning/codebase/."
-capabilities:
-  - codebase-analysis
-  - architecture-mapping
-  - quality-assessment
-  - concern-identification

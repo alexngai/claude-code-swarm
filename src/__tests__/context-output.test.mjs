@@ -64,7 +64,7 @@ describe("context-output", () => {
       expect(out).toContain("/swarm");
     });
 
-    it("includes built-in template names", () => {
+    it("includes openteams template names", () => {
       const out = formatBootstrapContext({ template: "t" });
       expect(out).toContain("get-shit-done");
       expect(out).toContain("bmad-method");
@@ -103,7 +103,7 @@ describe("context-output", () => {
   describe("formatNoTemplateMessage", () => {
     it("includes usage instructions", () => {
       const out = formatNoTemplateMessage([]);
-      expect(out).toContain(".claude-swarm.json");
+      expect(out).toContain(".swarm/claude-swarm/config.json");
       expect(out).toContain("/swarm");
     });
 
@@ -119,7 +119,7 @@ describe("context-output", () => {
 
     it("handles empty templates array", () => {
       const out = formatNoTemplateMessage([]);
-      expect(out).toContain("Available built-in templates:");
+      expect(out).toContain("Available templates (via openteams):");
     });
   });
 

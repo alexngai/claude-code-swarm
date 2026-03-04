@@ -14,6 +14,9 @@ describe("index", () => {
   it("exports PID_PATH", () => expect(typeof index.PID_PATH).toBe("string"));
   it("exports ROLES_PATH", () => expect(typeof index.ROLES_PATH).toBe("string"));
   it("exports CONFIG_PATH", () => expect(typeof index.CONFIG_PATH).toBe("string"));
+  it("exports TMP_DIR", () => expect(typeof index.TMP_DIR).toBe("string"));
+  it("exports TEAMS_DIR", () => expect(typeof index.TEAMS_DIR).toBe("string"));
+  it("exports teamDir", () => expect(typeof index.teamDir).toBe("function"));
   it("exports ensureMapDir", () => expect(typeof index.ensureMapDir).toBe("function"));
   it("exports pluginDir", () => expect(typeof index.pluginDir).toBe("function"));
 
