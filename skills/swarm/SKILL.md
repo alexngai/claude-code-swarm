@@ -21,7 +21,7 @@ The plugin directory is listed in the system init message under `plugins` (look 
 find ~/.claude/plugins -name "plugin.json" -path "*/claude-code-swarm/*" -exec dirname {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null
 ```
 
-The template name comes from `$ARGUMENTS` (e.g. `get-shit-done`). If none provided, ask the user. Templates available via openteams: **get-shit-done**, **bmad-method** (and more).
+The template name comes from `$ARGUMENTS` (e.g. `gsd`). If none provided, ask the user. Templates available via openteams: **gsd**, **bmad-method**, **bug-fix-pipeline**, **docs-sync**, **security-audit** (and more).
 
 Generate artifacts with the team-loader script (this handles dependency resolution, artifact generation, and roles.json):
 
@@ -32,7 +32,7 @@ node "$PLUGIN_DIR/scripts/team-loader.mjs" "<template-name>"
 ### Step 2: Read the generated artifacts
 
 1. Read `.swarm/claude-swarm/tmp/teams/<template-name>/SKILL.md` — the team catalog overview
-2. Read `.swarm/claude-swarm/tmp/teams/<template-name>/agents/<root-role>.md` — the root agent's prompt (the root role is typically `orchestrator` for get-shit-done, `master` for bmad-method)
+2. Read `.swarm/claude-swarm/tmp/teams/<template-name>/agents/<root-role>.md` — the root agent's prompt (the root role is typically `orchestrator` for gsd, `master` for bmad-method)
 
 ### Step 3: Create the native team
 

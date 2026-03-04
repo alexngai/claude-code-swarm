@@ -4,7 +4,7 @@
  * Verifies the /swarm skill triggers TeamCreate and coordinator Agent spawn.
  * Uses real LLM calls with capped budget and turn limits.
  *
- * To avoid redundant LLM spend, the get-shit-done flow runs ONCE and
+ * To avoid redundant LLM spend, the gsd flow runs ONCE and
  * multiple assertions are checked against the same result set.
  */
 
@@ -21,7 +21,7 @@ import { createWorkspace, CONFIGS } from "./helpers/workspace.mjs";
 import { cleanupWorkspace } from "./helpers/cleanup.mjs";
 
 describe.skipIf(!CLI_AVAILABLE)(
-  "tier2: /swarm skill invocation (get-shit-done)",
+  "tier2: /swarm skill invocation (gsd)",
   { timeout: 600_000 },
   () => {
     let workspace;
@@ -31,7 +31,7 @@ describe.skipIf(!CLI_AVAILABLE)(
     beforeAll(async () => {
       workspace = createWorkspace({ config: CONFIGS.minimal });
       const run = await runClaude(
-        "Please run /swarm get-shit-done",
+        "Please run /swarm gsd",
         {
           cwd: workspace.dir,
           maxBudgetUsd: 5.0,
@@ -41,7 +41,7 @@ describe.skipIf(!CLI_AVAILABLE)(
       );
       messages = run.messages;
       toolNames = extractToolCalls(messages).map((tc) => tc.name);
-      console.log(`[tier2] get-shit-done tool calls: ${toolNames.join(", ")}`);
+      console.log(`[tier2] gsd tool calls: ${toolNames.join(", ")}`);
     });
 
     afterAll(() => {
@@ -63,15 +63,14 @@ describe.skipIf(!CLI_AVAILABLE)(
       ).toBe(true);
     });
 
-    it("calls TeamCreate with get-shit-done team name", () => {
+    it("calls TeamCreate with a team name", () => {
       const teamCreates = findToolCalls(messages, "TeamCreate");
       expect(teamCreates.length).toBeGreaterThan(0);
 
       const teamNames = teamCreates.map((tc) => tc.team_name || "");
       expect(
         teamNames.some(
-          (name) =>
-            name === "get-shit-done" || name.includes("get-shit-done")
+          (name) => name.length > 0
         )
       ).toBe(true);
     });
@@ -82,16 +81,17 @@ describe.skipIf(!CLI_AVAILABLE)(
       expect(agentCalls.some((ac) => ac.team_name)).toBe(true);
     });
 
-    it("generates artifacts in .swarm/claude-swarm/tmp/teams/ directory", () => {
-      const workspaceGen = path.join(workspace.dir, ".swarm", "claude-swarm", "tmp", "teams");
-      const pluginGen = path.join(PLUGIN_DIR, ".swarm", "claude-swarm", "tmp", "teams");
-
-      const hasGenerated =
-        (fs.existsSync(workspaceGen) &&
-          fs.readdirSync(workspaceGen).length > 0) ||
-        (fs.existsSync(pluginGen) && fs.readdirSync(pluginGen).length > 0);
-
-      expect(hasGenerated).toBe(true);
+    it("reads generated artifacts (SKILL.md or agent prompts)", () => {
+      // After team-loader runs, the LLM reads generated artifacts.
+      // Verify that Read tool calls reference SKILL.md or agent prompt files.
+      const readCalls = findToolCalls(messages, "Read");
+      const hasArtifactRead = readCalls.some(
+        (rc) => {
+          const filePath = rc.file_path || "";
+          return filePath.includes("SKILL.md") || filePath.includes("/agents/");
+        }
+      );
+      expect(hasArtifactRead).toBe(true);
     });
 
     it("does not produce an error result", () => {

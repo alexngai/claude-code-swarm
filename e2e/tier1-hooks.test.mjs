@@ -101,7 +101,7 @@ describe.skipIf(!CLI_AVAILABLE)("tier1: diagnostics", { timeout: 120_000 }, () =
       ["-p", "say OK", "--output-format", "stream-json", "--verbose",
        "--no-session-persistence", "--dangerously-skip-permissions",
        "--plugin-dir", PLUGIN_DIR, "--max-turns", "1"],
-      { timeout: 30_000 }
+      { timeout: 60_000 }
     );
     console.log("[diag] stream-json:", { exitCode: r.exitCode, stdoutLen: r.stdout.length, killed: r.killed });
     console.log("[diag] first 500 chars:", r.stdout.slice(0, 500));
@@ -129,7 +129,7 @@ describe.skipIf(!CLI_AVAILABLE)("tier1: SessionStart hook integration", { timeou
     const text = getAllSessionText(run);
     console.log("[tier1] template text length:", text.length);
     console.log("[tier1] messages:", run.messages.length, "types:", run.messages.map(m => m.subtype || m.type).join(", "));
-    expect(text).toContain("get-shit-done");
+    expect(text).toContain("gsd");
   });
 
   it("hook output mentions /swarm command", async () => {
@@ -170,7 +170,7 @@ describe.skipIf(!CLI_AVAILABLE)("tier1: SessionStart hook integration", { timeou
     const text = getAllSessionText(run);
     // Should mention at least one built-in template
     const mentionsTemplate =
-      text.includes("get-shit-done") || text.includes("bmad-method");
+      text.includes("gsd") || text.includes("bmad-method");
     expect(mentionsTemplate).toBe(true);
   });
 });

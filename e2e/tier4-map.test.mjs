@@ -40,7 +40,7 @@ describe.skipIf(!CLI_AVAILABLE)(
 
     function mapConfig() {
       return {
-        template: "get-shit-done",
+        template: "gsd",
         map: {
           enabled: true,
           server: `ws://localhost:${mockServer.port}`,
@@ -111,7 +111,7 @@ describe.skipIf(!CLI_AVAILABLE)(
 
     it("mock server receives messages during /swarm invocation", async () => {
       workspace = createWorkspace({ config: mapConfig() });
-      const { messages } = await runClaude("Please run /swarm get-shit-done", {
+      const { messages } = await runClaude("Please run /swarm gsd", {
         cwd: workspace.dir,
         maxBudgetUsd: 5.0,
         maxTurns: 30,

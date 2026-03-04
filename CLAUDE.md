@@ -55,7 +55,7 @@ claude-code-swarm/
         ├── .gitignore            # Ignores tmp/
         └── tmp/                  # Generated runtime artifacts (gitignored)
             ├── teams/            # Per-template artifact cache
-            │   ├── get-shit-done/
+            │   ├── gsd/
             │   │   ├── SKILL.md
             │   │   └── agents/
             │   └── bmad-method/
@@ -75,10 +75,10 @@ claude-code-swarm/
 ### Quick start
 1. Create `.swarm/claude-swarm/config.json` in your project:
    ```json
-   { "template": "get-shit-done" }
+   { "template": "gsd" }
    ```
 2. Start a Claude Code session — the hook loads the team automatically
-3. Use `/swarm get-shit-done` to launch — this creates a native Claude Code team and spawns a coordinator
+3. Use `/swarm gsd` to launch — this creates a native Claude Code team and spawns a coordinator
 
 ### How launching works
 
@@ -91,7 +91,7 @@ claude-code-swarm/
 ### With MAP observability
 ```json
 {
-  "template": "get-shit-done",
+  "template": "gsd",
   "map": {
     "server": "ws://localhost:8080"
   }
@@ -109,7 +109,7 @@ MAP options:
 ### With sessionlog → MAP sync
 ```json
 {
-  "template": "get-shit-done",
+  "template": "gsd",
   "map": { "server": "ws://localhost:8080" },
   "sessionlog": {
     "enabled": true,
@@ -127,8 +127,14 @@ When both MAP and sessionlog are active, the plugin bridges sessionlog's session
 Requires sessionlog to be installed and active independently (`sessionlog enable`).
 
 ### Available templates
-- **get-shit-done** — 12-role system with wave-based parallel execution, goal-backward verification
+
+Templates are provided by the openteams package (installed via swarmkit). Built-in templates include:
+- **gsd** — 12-role system with wave-based parallel execution, goal-backward verification
 - **bmad-method** — 10-role agile team across 4 phases (analysis, planning, solutioning, implementation)
+- **bug-fix-pipeline** — Linear pipeline for autonomous bug fixing
+- **docs-sync** — Fan-out/fan-in documentation pipeline
+- **security-audit** — Fan-out/fan-in security scanning pipeline
+- And more — run `openteams generate catalog` or use `/swarm` to see all available templates
 
 ### Custom templates
 Point to any openteams template directory:
@@ -168,7 +174,7 @@ SWARM_MAP_SERVER=ws://map.ci.internal:8080 claude
 
 ### Per-template caching
 
-Team artifacts are cached per template under `.swarm/claude-swarm/tmp/teams/<template-name>/` (gitignored via `.swarm/claude-swarm/.gitignore`). When switching between templates (e.g. from get-shit-done to bmad-method and back), previously generated artifacts are reused instantly. The cache is invalidated by deleting the template's directory.
+Team artifacts are cached per template under `.swarm/claude-swarm/tmp/teams/<template-name>/` (gitignored via `.swarm/claude-swarm/.gitignore`). When switching between templates (e.g. from gsd to bmad-method and back), previously generated artifacts are reused instantly. The cache is invalidated by deleting the template's directory.
 
 ### Runtime coordination
 
@@ -229,7 +235,7 @@ src/sidecar-client.mjs   ← sendToSidecar(), ensureSidecar(), startSidecar()
 src/sidecar-server.mjs   ← createSocketServer(), createCommandHandler()
 src/map-events.mjs       ← sendCommand(), emitPayload(), build*Command(), build*Payload()
 src/sessionlog.mjs       ← findActiveSession(), buildTrajectoryCheckpoint(), syncSessionlog()
-src/template.mjs         ← resolveTemplatePath(), generateTeamArtifacts()
+src/template.mjs         ← resolveTemplatePath(), listAvailableTemplates(), generateTeamArtifacts()
 src/agent-generator.mjs  ← generateAllAgents(), generateAgentMd()
 src/context-output.mjs   ← format*Context(), format*Message()
 src/bootstrap.mjs        ← bootstrap() — full SessionStart orchestration

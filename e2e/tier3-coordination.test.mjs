@@ -28,14 +28,14 @@ describe.skipIf(!CLI_AVAILABLE)(
 
     beforeAll(async () => {
       workspace = createWorkspace({
-        config: { template: "get-shit-done" },
+        config: { template: "gsd" },
         files: {
           "README.md": "# Test Project\nA simple test project.\n",
         },
       });
 
       const run = await runClaude(
-        'Please run /swarm get-shit-done with goal: Create a Python script called hello.py that prints "Hello, World!"',
+        'Please run /swarm gsd with goal: Create a Python script called hello.py that prints "Hello, World!"',
         {
           cwd: workspace.dir,
           maxBudgetUsd: 5.0,

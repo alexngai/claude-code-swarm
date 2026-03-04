@@ -21,11 +21,11 @@ describe("config", () => {
 
     it("reads and parses a valid config file", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
-        template: "get-shit-done",
+        template: "gsd",
         map: { enabled: true, server: "ws://example.com:9090" },
       }));
       const config = readConfig(configPath);
-      expect(config.template).toBe("get-shit-done");
+      expect(config.template).toBe("gsd");
       expect(config.map.enabled).toBe(true);
       expect(config.map.server).toBe("ws://example.com:9090");
     });
@@ -108,7 +108,7 @@ describe("config", () => {
     });
 
     it("returns swarm:<template> when template is set but scope is not", () => {
-      expect(resolveScope({ map: { scope: "" }, template: "get-shit-done" })).toBe("swarm:get-shit-done");
+      expect(resolveScope({ map: { scope: "" }, template: "gsd" })).toBe("swarm:gsd");
     });
 
     it("returns swarm:default when neither scope nor template is set", () => {
@@ -276,7 +276,7 @@ describe("config", () => {
     });
 
     it("returns template name when no explicit scope", () => {
-      expect(resolveTeamName({ map: { scope: "" }, template: "get-shit-done" })).toBe("get-shit-done");
+      expect(resolveTeamName({ map: { scope: "" }, template: "gsd" })).toBe("gsd");
     });
 
     it("returns 'default' when no scope or template", () => {

@@ -40,7 +40,7 @@ export const SESSIONLOG_DIR = path.join(".git", "sessionlog-sessions");
 
 /**
  * Get the per-template team directory.
- * E.g. teamDir("get-shit-done") → ".swarm/claude-swarm/tmp/teams/get-shit-done"
+ * E.g. teamDir("gsd") → ".swarm/claude-swarm/tmp/teams/gsd"
  */
 export function teamDir(templateName) {
   return path.join(TEAMS_DIR, templateName);

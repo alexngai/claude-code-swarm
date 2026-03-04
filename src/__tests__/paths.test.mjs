@@ -55,7 +55,7 @@ describe("paths", () => {
 
   describe("teamDir", () => {
     it("returns per-template path under TEAMS_DIR", () => {
-      expect(teamDir("get-shit-done")).toBe(".swarm/claude-swarm/tmp/teams/get-shit-done");
+      expect(teamDir("gsd")).toBe(".swarm/claude-swarm/tmp/teams/gsd");
       expect(teamDir("bmad-method")).toBe(".swarm/claude-swarm/tmp/teams/bmad-method");
     });
   });

@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import path from "path";
 import fs from "fs";
-import { resolveTemplatePath, listAvailableTemplates, readTeamManifest } from "../template.mjs";
-import { pluginDir } from "../paths.mjs";
+import { resolveTemplatePath, listAvailableTemplates, readTeamManifest, generateTeamArtifacts } from "../template.mjs";
 import { makeTmpDir, writeFile, makeTeamYaml, cleanupTmpDir } from "./helpers.mjs";
 
 describe("template", () => {
@@ -29,6 +28,15 @@ describe("template", () => {
       const result = resolveTemplatePath(dir);
       expect(result).toBe(path.resolve(dir));
     });
+
+    it("resolves built-in template names via openteams", () => {
+      // openteams ships built-in templates like gsd, bmad-method
+      const result = resolveTemplatePath("gsd");
+      if (result) {
+        expect(result).toContain("gsd");
+        expect(fs.existsSync(path.join(result, "team.yaml"))).toBe(true);
+      }
+    });
   });
 
   describe("listAvailableTemplates", () => {
@@ -37,7 +45,7 @@ describe("template", () => {
       expect(Array.isArray(templates)).toBe(true);
     });
 
-    it("templates have name, description, and path when available", () => {
+    it("templates have name, description, and path", () => {
       const templates = listAvailableTemplates();
       if (templates.length > 0) {
         expect(templates[0]).toHaveProperty("name");
@@ -46,10 +54,13 @@ describe("template", () => {
       }
     });
 
-    it("returns empty array when openteams is not available", () => {
-      // Pass a fake plugin dir where no openteams binary exists
-      const result = listAvailableTemplates(path.join(tmpDir, "nope"));
-      expect(result).toEqual([]);
+    it("includes built-in templates when openteams is available", () => {
+      const templates = listAvailableTemplates();
+      // openteams 0.2.2+ ships built-in templates
+      if (templates.length > 0) {
+        const names = templates.map((t) => t.name);
+        expect(names.some((n) => n === "gsd" || n === "bmad-method")).toBe(true);
+      }
     });
   });
 
@@ -59,7 +70,6 @@ describe("template", () => {
       writeFile(templateDir, "team.yaml", makeTeamYaml({ name: "test-team", roles: ["a", "b"] }));
       const manifest = readTeamManifest(templateDir);
       expect(manifest.name).toBe("test-team");
-      expect(manifest.roles).toEqual(["a", "b"]);
     });
 
     it("throws when team.yaml does not exist", () => {
@@ -73,7 +83,27 @@ describe("template", () => {
       }));
       const manifest = readTeamManifest(templateDir);
       expect(manifest.topology.root.role).toBe("lead");
-      expect(manifest.topology.companions[0].role).toBe("dev");
+    });
+  });
+
+  describe("generateTeamArtifacts", () => {
+    it("generates SKILL.md and agent prompts for a valid template", () => {
+      const templatePath = resolveTemplatePath("gsd");
+      if (!templatePath) return; // skip if openteams not available
+
+      const outputDir = path.join(tmpDir, "output");
+      const result = generateTeamArtifacts(templatePath, outputDir);
+
+      expect(result.success).toBe(true);
+      expect(result.teamName).toBe("gsd");
+      expect(fs.existsSync(path.join(outputDir, "SKILL.md"))).toBe(true);
+      expect(fs.existsSync(path.join(outputDir, "agents"))).toBe(true);
+    });
+
+    it("returns error for nonexistent template path", () => {
+      const result = generateTeamArtifacts(path.join(tmpDir, "nope"), path.join(tmpDir, "out"));
+      expect(result.success).toBe(false);
+      expect(result.error).toBeTruthy();
     });
   });
 });

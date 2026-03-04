@@ -44,7 +44,7 @@ export function formatBootstrapContext({
   lines.push(
     "Use `/swarm` to launch the team (creates a native Claude Code team)."
   );
-  lines.push("Templates available via openteams: **get-shit-done**, **bmad-method** (and more)");
+  lines.push("Templates available via openteams: **gsd**, **bmad-method**, **bug-fix-pipeline**, **docs-sync** (and more)");
   lines.push("");
 
   return lines.join("\n");
@@ -88,10 +88,10 @@ export function formatTeamLoadedContext(generatedDir, templatePath, teamName) {
   );
   lines.push("");
   lines.push(
-    `Per-role prompts are available at \`${generatedDir}/roles/<role>/SKILL.md\``
+    `Per-role prompts are available at \`${generatedDir}/agents/<role>.md\``
   );
   lines.push(
-    "Read a role's SKILL.md before spawning an agent for that role."
+    "Read a role's agent prompt before spawning an agent for that role."
   );
   lines.push("");
   lines.push("### Coordination");
@@ -121,7 +121,7 @@ export function formatNoTemplateMessage(templates) {
     "",
     "```json",
     "{",
-    '  "template": "get-shit-done"',
+    '  "template": "gsd"',
     "}",
     "```",
     "",

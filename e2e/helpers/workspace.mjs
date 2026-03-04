@@ -62,9 +62,9 @@ export function createWorkspace(options = {}) {
  * Standard config presets.
  */
 export const CONFIGS = {
-  minimal: { template: "get-shit-done" },
+  minimal: { template: "gsd" },
   withMap: {
-    template: "get-shit-done",
+    template: "gsd",
     map: { enabled: true, server: "ws://localhost:9876", sidecar: "session" },
   },
   bmadMethod: { template: "bmad-method" },

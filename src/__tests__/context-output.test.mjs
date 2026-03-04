@@ -11,8 +11,8 @@ import { makeTmpDir, writeFile, cleanupTmpDir } from "./helpers.mjs";
 describe("context-output", () => {
   describe("formatBootstrapContext", () => {
     it("includes team template name when template is set", () => {
-      const out = formatBootstrapContext({ template: "get-shit-done" });
-      expect(out).toContain("**get-shit-done**");
+      const out = formatBootstrapContext({ template: "gsd" });
+      expect(out).toContain("**gsd**");
     });
 
     it("shows 'No team template configured' when template is empty", () => {
@@ -66,7 +66,7 @@ describe("context-output", () => {
 
     it("includes openteams template names", () => {
       const out = formatBootstrapContext({ template: "t" });
-      expect(out).toContain("get-shit-done");
+      expect(out).toContain("gsd");
       expect(out).toContain("bmad-method");
     });
   });
