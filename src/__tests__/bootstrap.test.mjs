@@ -288,6 +288,18 @@ describe("bootstrap", () => {
       );
     });
 
+    it("calls initProjectPackage for claude-code-swarm when not initialized", async () => {
+      mockSwarmkit.isProjectInit.mockReturnValue(false);
+      await bootstrap();
+      expect(mockSwarmkit.initProjectPackage).toHaveBeenCalledWith(
+        "claude-code-swarm",
+        expect.objectContaining({
+          usePrefix: true,
+          packages: expect.arrayContaining(["claude-code-swarm"]),
+        })
+      );
+    });
+
     it("skips initProjectPackage when already initialized", async () => {
       mockSwarmkit.isProjectInit.mockReturnValue(true);
       await bootstrap();
@@ -319,15 +331,23 @@ describe("bootstrap", () => {
       expect(result).toHaveProperty("template");
     });
 
-    it("skips project init when swarmkit lacks init functions", async () => {
+    it("falls back to ensureSwarmDir when swarmkit lacks init functions", async () => {
+      const { ensureSwarmDir } = await import("../paths.mjs");
       resolveSwarmkit.mockResolvedValue({
         getInstalledVersion: vi.fn().mockResolvedValue("1.0.0"),
         installPackages: vi.fn().mockResolvedValue([]),
         addInstalledPackages: vi.fn(),
         // No isProjectInit or initProjectPackage
       });
-      const result = await bootstrap();
-      expect(result).toHaveProperty("template");
+      await bootstrap();
+      expect(ensureSwarmDir).toHaveBeenCalled();
+    });
+
+    it("falls back to ensureSwarmDir when swarmkit is unavailable", async () => {
+      const { ensureSwarmDir } = await import("../paths.mjs");
+      resolveSwarmkit.mockResolvedValue(null);
+      await bootstrap();
+      expect(ensureSwarmDir).toHaveBeenCalled();
     });
   });
 });

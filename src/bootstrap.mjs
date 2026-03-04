@@ -102,18 +102,23 @@ async function ensureGlobalPackages(config) {
 }
 
 /**
- * Initialize swarmkit project directories (.swarm/openteams/, .swarm/sessionlog/).
+ * Initialize swarmkit project directories (.swarm/openteams/, .swarm/sessionlog/, .swarm/claude-swarm/).
  * Uses swarmkit's initProjectPackage() for packages that need project-level setup.
+ * Falls back to ensureSwarmDir() for claude-code-swarm if swarmkit is unavailable.
  * Best-effort: warnings to stderr, never blocks the session.
  */
 async function initSwarmProject(config) {
   const swarmkit = await resolveSwarmkit();
-  if (!swarmkit || !swarmkit.isProjectInit || !swarmkit.initProjectPackage) return;
+  if (!swarmkit || !swarmkit.isProjectInit || !swarmkit.initProjectPackage) {
+    // Swarmkit unavailable — ensure .swarm/claude-swarm/ exists via local fallback
+    ensureSwarmDir();
+    return;
+  }
 
   const cwd = process.cwd();
   const ctx = {
     cwd,
-    packages: getRequiredGlobalPackages(config),
+    packages: [...getRequiredGlobalPackages(config), "claude-code-swarm"],
     embeddingProvider: null,
     apiKeys: {},
     usePrefix: true,
@@ -134,6 +139,16 @@ async function initSwarmProject(config) {
       await swarmkit.initProjectPackage("sessionlog", ctx);
     } catch {
       // best-effort
+    }
+  }
+
+  // Init claude-code-swarm project dir (.swarm/claude-swarm/)
+  if (!swarmkit.isProjectInit(cwd, "claude-code-swarm")) {
+    try {
+      await swarmkit.initProjectPackage("claude-code-swarm", ctx);
+    } catch {
+      // Fallback to local ensureSwarmDir() if swarmkit doesn't support this package yet
+      ensureSwarmDir();
     }
   }
 }
@@ -174,9 +189,6 @@ export async function bootstrap(pluginDirOverride) {
   // 0. Install local dependencies (js-yaml, swarmkit)
   installLocalDeps(dir);
 
-  // 0b. Ensure .swarm/ directory exists with .gitignore
-  ensureSwarmDir();
-
   // 1. Read config (before ensureGlobalPackages so we know what's needed)
   const config = readConfig();
 
@@ -186,7 +198,7 @@ export async function bootstrap(pluginDirOverride) {
   // 1c. Ensure global packages are installed via swarmkit (async, best-effort)
   await ensureGlobalPackages(config);
 
-  // 1d. Initialize swarmkit project directories (.swarm/openteams/, .swarm/sessionlog/)
+  // 1d. Initialize swarmkit project directories (.swarm/openteams/, .swarm/sessionlog/, .swarm/claude-swarm/)
   await initSwarmProject(config);
 
   const scope = resolveScope(config);
