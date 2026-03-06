@@ -58,6 +58,71 @@ npm install -g openteams
 openteams editor
 ```
 
+## Configuration
+
+### Config resolution
+
+Configuration is resolved with tiered fallthrough — each level overrides the one below:
+
+```
+SWARM_* env vars  >  project config  >  global config  >  defaults
+```
+
+### Project config
+
+Lives in your project directory at `.swarm/claude-swarm/config.json` (or `.claude-swarm/config.json` with `--no-prefix`):
+
+```json
+{
+  "template": "get-shit-done",
+  "map": {
+    "scope": "my-project",
+    "systemId": "my-project-swarm"
+  }
+}
+```
+
+Project config is typically committed to the repo or gitignored per preference.
+
+### Global config
+
+Lives at `~/.claude-swarm/config.json`. Created by `swarmkit init` or manually. Sets user-wide defaults that apply to all projects unless overridden:
+
+```json
+{
+  "map": {
+    "server": "ws://my-map-server:8080",
+    "sidecar": "session",
+    "auth": {
+      "token": "my-token"
+    }
+  },
+  "sessionlog": {
+    "enabled": true,
+    "sync": "metrics"
+  }
+}
+```
+
+This is useful for settings you don't want to repeat in every project — MAP server address, auth tokens, sidecar mode, sessionlog preferences. Fields like `template` and `map.scope` are typically project-specific and belong in the project config.
+
+### Environment variable overrides
+
+All config values can be overridden via `SWARM_*` environment variables:
+
+| Config field | Environment variable |
+|---|---|
+| `template` | `SWARM_TEMPLATE` |
+| `map.server` | `SWARM_MAP_SERVER` |
+| `map.enabled` | `SWARM_MAP_ENABLED` |
+| `map.scope` | `SWARM_MAP_SCOPE` |
+| `map.systemId` | `SWARM_MAP_SYSTEM_ID` |
+| `map.sidecar` | `SWARM_MAP_SIDECAR` |
+| `map.auth.token` | `SWARM_MAP_AUTH_TOKEN` |
+| `map.auth.param` | `SWARM_MAP_AUTH_PARAM` |
+| `sessionlog.enabled` | `SWARM_SESSIONLOG_ENABLED` |
+| `sessionlog.sync` | `SWARM_SESSIONLOG_SYNC` |
+
 ## How it works
 
 1. **SessionStart hook** ensures `openteams` is installed and reads your team configuration
