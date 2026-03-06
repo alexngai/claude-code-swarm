@@ -60,12 +60,34 @@ export function readConfig(configPath = CONFIG_PATH) {
       scope: envStr("SWARM_MAP_SCOPE") ?? raw.map?.scope ?? "",
       systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? raw.map?.systemId ?? DEFAULTS.mapSystemId,
       sidecar: envStr("SWARM_MAP_SIDECAR") ?? raw.map?.sidecar ?? DEFAULTS.mapSidecar,
+      auth: {
+        token: envStr("SWARM_MAP_AUTH_TOKEN") ?? raw.map?.auth?.token ?? "",
+        param: envStr("SWARM_MAP_AUTH_PARAM") ?? raw.map?.auth?.param ?? "token",
+      },
     },
     sessionlog: {
       enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(raw.sessionlog?.enabled),
       sync: envStr("SWARM_SESSIONLOG_SYNC") ?? raw.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
     },
   };
+}
+
+/**
+ * Build the MAP server URL with auth query param if configured.
+ * If the token is already in the server URL, returns as-is.
+ */
+export function resolveMapServer(config) {
+  const server = config.map?.server || DEFAULTS.mapServer;
+  const token = config.map?.auth?.token;
+  if (!token) return server;
+
+  // Don't double-add if token is already in the URL
+  const url = new URL(server);
+  const param = config.map?.auth?.param || "token";
+  if (url.searchParams.has(param)) return server;
+
+  url.searchParams.set(param, token);
+  return url.toString();
 }
 
 /**
