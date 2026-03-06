@@ -9,7 +9,7 @@ import path from "path";
 import net from "net";
 import { spawn } from "child_process";
 import { SOCKET_PATH, PID_PATH, pluginDir } from "./paths.mjs";
-import { resolveScope, DEFAULTS } from "./config.mjs";
+import { resolveScope, resolveMapServer, DEFAULTS } from "./config.mjs";
 
 /**
  * Send a command to the sidecar via UNIX socket.
@@ -52,7 +52,7 @@ export async function startSidecar(config, pluginDirOverride) {
   const dir = pluginDirOverride || pluginDir();
   const sidecarPath = path.join(dir, "scripts", "map-sidecar.mjs");
 
-  const server = config.map?.server || DEFAULTS.mapServer;
+  const server = resolveMapServer(config);
   const scope = resolveScope(config);
   const systemId = config.map?.systemId || DEFAULTS.mapSystemId;
 

@@ -105,6 +105,8 @@ MAP options:
 - `scope` — MAP scope name (default: `swarm:<template>`)
 - `systemId` — System identifier for federation (default: `system-claude-swarm`)
 - `sidecar` — `"session"` (starts/stops with session, default) or `"persistent"` (user-managed)
+- `auth.token` — Authentication token appended as a query parameter to the server URL
+- `auth.param` — Query parameter name for the token (default: `token`)
 
 ### With sessionlog → MAP sync
 ```json
@@ -154,6 +156,8 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `map.scope` | `SWARM_MAP_SCOPE` | string | `""` (derived from template) |
 | `map.systemId` | `SWARM_MAP_SYSTEM_ID` | string | `system-claude-swarm` |
 | `map.sidecar` | `SWARM_MAP_SIDECAR` | string | `session` |
+| `map.auth.token` | `SWARM_MAP_AUTH_TOKEN` | string | `""` |
+| `map.auth.param` | `SWARM_MAP_AUTH_PARAM` | string | `token` |
 | `sessionlog.enabled` | `SWARM_SESSIONLOG_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `sessionlog.sync` | `SWARM_SESSIONLOG_SYNC` | string | `off` |
 

@@ -3,7 +3,7 @@
  */
 
 // Config
-export { readConfig, resolveScope, resolveTeamName, DEFAULTS } from "./config.mjs";
+export { readConfig, resolveScope, resolveTeamName, resolveMapServer, DEFAULTS } from "./config.mjs";
 
 // Paths
 export {
