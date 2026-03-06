@@ -6,7 +6,7 @@
  */
 
 import fs from "fs";
-import { CONFIG_PATH } from "./paths.mjs";
+import { CONFIG_PATH, GLOBAL_CONFIG_PATH } from "./paths.mjs";
 
 export const DEFAULTS = {
   mapServer: "ws://localhost:8080",
@@ -34,36 +34,44 @@ function envStr(name) {
 }
 
 /**
- * Read and normalize .swarm/claude/config.json config.
- * Priority: SWARM_* env vars > config file > defaults.
+ * Read a JSON config file. Returns empty object on any error.
+ */
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Read and normalize config with tiered resolution.
+ * Priority: SWARM_* env vars > project config file > global config file > defaults.
  * Never throws — returns defaults on any error.
  */
-export function readConfig(configPath = CONFIG_PATH) {
-  let raw = {};
-  try {
-    raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  } catch {
-    // Missing or invalid config file — raw stays empty, defaults apply
-  }
+export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_CONFIG_PATH) {
+  const global = readJsonFile(globalConfigPath);
+  const project = readJsonFile(configPath);
 
-  const server = envStr("SWARM_MAP_SERVER") ?? raw.map?.server ?? undefined;
-  const explicitEnabled = envBool("SWARM_MAP_ENABLED") ?? (raw.map?.enabled === true ? true : undefined);
+  // Project overrides global for each field (not deep merge — per-field fallthrough)
+  const server = envStr("SWARM_MAP_SERVER") ?? project.map?.server ?? global.map?.server ?? undefined;
+  const explicitEnabled = envBool("SWARM_MAP_ENABLED") ?? (project.map?.enabled === true ? true : undefined) ?? (global.map?.enabled === true ? true : undefined);
 
   // MAP is enabled if explicitly set OR if a server is configured
   const mapEnabled = explicitEnabled ?? (server !== undefined);
 
   return {
-    template: envStr("SWARM_TEMPLATE") ?? raw.template ?? "",
+    template: envStr("SWARM_TEMPLATE") ?? project.template ?? global.template ?? "",
     map: {
       enabled: mapEnabled,
       server: server || DEFAULTS.mapServer,
-      scope: envStr("SWARM_MAP_SCOPE") ?? raw.map?.scope ?? "",
-      systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? raw.map?.systemId ?? DEFAULTS.mapSystemId,
-      sidecar: envStr("SWARM_MAP_SIDECAR") ?? raw.map?.sidecar ?? DEFAULTS.mapSidecar,
+      scope: envStr("SWARM_MAP_SCOPE") ?? project.map?.scope ?? global.map?.scope ?? "",
+      systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? project.map?.systemId ?? global.map?.systemId ?? DEFAULTS.mapSystemId,
+      sidecar: envStr("SWARM_MAP_SIDECAR") ?? project.map?.sidecar ?? global.map?.sidecar ?? DEFAULTS.mapSidecar,
     },
     sessionlog: {
-      enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(raw.sessionlog?.enabled),
-      sync: envStr("SWARM_SESSIONLOG_SYNC") ?? raw.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
+      enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(project.sessionlog?.enabled ?? global.sessionlog?.enabled),
+      sync: envStr("SWARM_SESSIONLOG_SYNC") ?? project.sessionlog?.sync ?? global.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
     },
   };
 }

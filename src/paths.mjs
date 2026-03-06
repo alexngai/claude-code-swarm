@@ -14,11 +14,16 @@
 
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { fileURLToPath } from "url";
 
 // Root plugin directory within .swarm
 export const SWARM_DIR = ".swarm/claude-swarm";
 export const CONFIG_PATH = ".swarm/claude-swarm/config.json";
+
+// Global config directory (~/.claude-swarm/)
+export const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-swarm");
+export const GLOBAL_CONFIG_PATH = path.join(GLOBAL_CONFIG_DIR, "config.json");
 
 // Temporary/generated artifacts (gitignored)
 export const TMP_DIR = ".swarm/claude-swarm/tmp";

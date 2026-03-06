@@ -102,6 +102,112 @@ describe("config", () => {
     });
   });
 
+  describe("global config fallthrough", () => {
+    let tmpDir;
+    beforeEach(() => { tmpDir = makeTmpDir(); });
+    afterEach(() => { cleanupTmpDir(tmpDir); });
+
+    it("uses global config values when project config is missing", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global-server:9090", sidecar: "persistent" },
+        sessionlog: { sync: "full" },
+      }));
+      const projectPath = path.join(tmpDir, "nonexistent.json");
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.server).toBe("ws://global-server:9090");
+      expect(config.map.sidecar).toBe("persistent");
+      expect(config.sessionlog.sync).toBe("full");
+    });
+
+    it("project config overrides global config", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global-server:9090", sidecar: "persistent" },
+        sessionlog: { sync: "full" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        map: { server: "ws://project-server:8080" },
+        sessionlog: { sync: "lifecycle" },
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.server).toBe("ws://project-server:8080");
+      expect(config.map.sidecar).toBe("persistent"); // falls through from global
+      expect(config.sessionlog.sync).toBe("lifecycle");
+    });
+
+    it("project template overrides global template", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        template: "global-template",
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        template: "project-template",
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.template).toBe("project-template");
+    });
+
+    it("global template is used when project has no template", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        template: "global-template",
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({}));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.template).toBe("global-template");
+    });
+
+    it("global map.enabled enables MAP when project has no map config", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { enabled: true, server: "ws://global-server:9090" },
+      }));
+      const projectPath = path.join(tmpDir, "nonexistent.json");
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.enabled).toBe(true);
+      expect(config.map.server).toBe("ws://global-server:9090");
+    });
+
+    it("global map.server implicitly enables MAP when project has no config", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global-server:9090" },
+      }));
+      const projectPath = path.join(tmpDir, "nonexistent.json");
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.enabled).toBe(true);
+    });
+
+    it("global sessionlog.enabled is used when project has no sessionlog config", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        sessionlog: { enabled: true, sync: "metrics" },
+      }));
+      const projectPath = path.join(tmpDir, "nonexistent.json");
+      const config = readConfig(projectPath, globalPath);
+      expect(config.sessionlog.enabled).toBe(true);
+      expect(config.sessionlog.sync).toBe("metrics");
+    });
+
+    it("falls back to defaults when both configs are missing", () => {
+      const globalPath = path.join(tmpDir, "nonexistent-global.json");
+      const projectPath = path.join(tmpDir, "nonexistent-project.json");
+      const config = readConfig(projectPath, globalPath);
+      expect(config.template).toBe("");
+      expect(config.map.enabled).toBe(false);
+      expect(config.map.server).toBe(DEFAULTS.mapServer);
+      expect(config.sessionlog.enabled).toBe(false);
+      expect(config.sessionlog.sync).toBe(DEFAULTS.sessionlogSync);
+    });
+
+    it("per-field fallthrough: project scope + global server", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global-server:9090", systemId: "global-system" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        map: { scope: "my-project" },
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.scope).toBe("my-project");
+      expect(config.map.server).toBe("ws://global-server:9090");
+      expect(config.map.systemId).toBe("global-system");
+    });
+  });
+
   describe("resolveScope", () => {
     it("returns explicit scope when config.map.scope is set", () => {
       expect(resolveScope({ map: { scope: "custom:scope" }, template: "test" })).toBe("custom:scope");
@@ -267,6 +373,28 @@ describe("config", () => {
       const config = readConfig(configPath);
       expect(config.template).toBe("file-template");
       expect(config.map.server).toBe("ws://file-server:8080");
+    });
+
+    it("env vars override global config values", () => {
+      process.env.SWARM_MAP_SERVER = "ws://env-server:9090";
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global-server:8080" },
+      }));
+      const projectPath = path.join(tmpDir, "nonexistent.json");
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.server).toBe("ws://env-server:9090");
+    });
+
+    it("env vars override both project and global config", () => {
+      process.env.SWARM_MAP_SIDECAR = "persistent";
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { sidecar: "session" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        map: { sidecar: "session" },
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.sidecar).toBe("persistent");
     });
   });
 

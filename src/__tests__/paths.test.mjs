@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import path from "path";
+import os from "os";
+import path from "path";
 import {
   SWARM_DIR, SOCKET_PATH, INBOX_PATH, PID_PATH, ROLES_PATH,
   CONFIG_PATH, TMP_DIR, TEAMS_DIR, MAP_DIR,
+  GLOBAL_CONFIG_DIR, GLOBAL_CONFIG_PATH,
   teamDir, pluginDir,
 } from "../paths.mjs";
 
@@ -57,6 +60,16 @@ describe("paths", () => {
     it("returns per-template path under TEAMS_DIR", () => {
       expect(teamDir("gsd")).toBe(".swarm/claude-swarm/tmp/teams/gsd");
       expect(teamDir("bmad-method")).toBe(".swarm/claude-swarm/tmp/teams/bmad-method");
+    });
+  });
+
+  describe("global config paths", () => {
+    it("GLOBAL_CONFIG_DIR is under ~/.swarmkit/", () => {
+      expect(GLOBAL_CONFIG_DIR).toBe(path.join(os.homedir(), ".claude-swarm"));
+    });
+
+    it("GLOBAL_CONFIG_PATH is config.json under GLOBAL_CONFIG_DIR", () => {
+      expect(GLOBAL_CONFIG_PATH).toBe(path.join(os.homedir(), ".claude-swarm", "config.json"));
     });
   });
 
