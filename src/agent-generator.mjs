@@ -51,15 +51,11 @@ export function determineTools(roleName, manifest, position) {
   // All team agents get native team coordination tools
   tools.push("TaskList", "TaskUpdate", "SendMessage");
 
-  // Root and companions get full tool access + Agent spawning + task creation
+  // Root and companions get full tool access + task creation
+  // Note: Agent tool is NOT granted — only the main agent (team lead) can spawn teammates.
+  // This is a Claude Code limitation: teammates cannot spawn other teammates.
   if (position === "root" || position === "companion") {
-    tools.push("Write", "Edit", "Agent", "TaskCreate");
-  }
-
-  // Check spawn rules — if this role can spawn others, it needs Agent tool
-  const spawnRules = manifest.topology?.spawn_rules?.[roleName];
-  if (spawnRules && spawnRules.length > 0 && !tools.includes("Agent")) {
-    tools.push("Agent");
+    tools.push("Write", "Edit", "TaskCreate");
   }
 
   // Roles that sound like they write code get write tools
@@ -242,7 +238,11 @@ export async function generateAllAgents(templateDir, outputDir) {
     const template = TemplateLoader.load(absTemplateDir);
     const teamName = template.manifest.name;
     const manifest = template.manifest;
-    const roleSkillMds = generateAllRoleSkillMds(template, { teamName });
+    const roleSkillMds = generateAllRoleSkillMds(template, {
+      teamName,
+      includeSpawnSection: false,
+      includeCliSection: false,
+    });
 
     for (const roleSkill of roleSkillMds) {
       const roleName = roleSkill.role;

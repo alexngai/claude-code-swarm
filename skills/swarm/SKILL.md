@@ -1,13 +1,15 @@
 ---
 name: swarm
-description: Launch an agent team from an openteams topology template. Creates a native Claude Code team and spawns a coordinator agent.
+description: Launch an agent team from an openteams topology template. Creates a native Claude Code team and spawns all agents directly.
 user_invocable: true
 argument: optional
 ---
 
 # /swarm — Launch a Team Topology
 
-You are the **swarm launcher** for the claude-code-swarm plugin. Your job is to launch a coordinated agent team from an openteams YAML topology template using Claude Code's native team features.
+You are the **swarm orchestrator** for the claude-code-swarm plugin. Your job is to launch and coordinate an agent team from an openteams YAML topology template using Claude Code's native team features.
+
+**Important**: Only the main agent (you) can spawn teammates. Spawned teammates cannot spawn other teammates — this is a Claude Code limitation. You must act as the orchestrator: spawn all agents, create tasks, and coordinate the team directly.
 
 ## What to do
 
@@ -31,8 +33,12 @@ node "$PLUGIN_DIR/scripts/team-loader.mjs" "<template-name>"
 
 ### Step 2: Read the generated artifacts
 
-1. Read `.swarm/claude-swarm/tmp/teams/<template-name>/SKILL.md` — the team catalog overview
-2. Read `.swarm/claude-swarm/tmp/teams/<template-name>/agents/<root-role>.md` — the root agent's prompt (the root role is typically `orchestrator` for gsd, `master` for bmad-method)
+The team-loader output tells you where the artifacts were generated. Look for the paths in its output — they point to the SKILL.md and agent prompt directory.
+
+1. Read the **SKILL.md** from the path shown in the team-loader output — this is the team catalog overview (topology, roles, relationships)
+2. Read agent prompts from the `agents/` subdirectory (e.g. `agents/<role>.md`) as needed before spawning each role
+
+Use the SKILL.md to understand the topology: which roles exist, the root role, companions, and spawn rules. You don't need to read every agent prompt upfront — read them as needed before spawning each agent.
 
 ### Step 3: Create the native team
 
@@ -43,29 +49,58 @@ TeamCreate(
 )
 ```
 
-### Step 4: Spawn the coordinator agent
+### Step 4: Create tasks based on the user's goal
 
-Build a coordinator prompt combining the root role's agent.md content, coordinator instructions, and the user's goal. Then spawn:
+Break down the user's goal into tasks using `TaskCreate`. Consider the topology's structure:
+- Which roles are needed for this goal?
+- What's the logical order of work (dependencies)?
+- Which tasks can run in parallel?
+
+Create tasks with clear descriptions and set up dependencies with `addBlockedBy` where needed.
+
+### Step 5: Spawn agents and assign tasks
+
+For each role needed, read its agent prompt and spawn it as a teammate:
 
 ```
 Agent(
-  name="<root-role-name>",
+  name="<role-name>",
   team_name="<template-name>",
-  prompt="<coordinator prompt>"
+  prompt="<agent prompt content + assigned task context>"
 )
 ```
 
-The coordinator prompt should tell the agent to:
-- Spawn companion agents (with `team_name`) by reading their `.swarm/claude-swarm/tmp/teams/<template-name>/agents/<role>.md`
-- Create tasks via `TaskCreate` based on the user's goal
-- Spawn additional agents on-demand per spawn_rules (always with `team_name`)
-- Coordinate via `SendMessage` and track progress via `TaskList`/`TaskUpdate`
+Spawn agents in parallel where possible (multiple Agent calls in one message). Include in each agent's prompt:
+- The content from their `.md` agent file
+- Which task(s) they should work on
+- Any relevant context from the user's goal
 
-**Stop here.** The coordinator handles everything from this point.
+After spawning, assign tasks to agents via `TaskUpdate(owner="<role-name>")`.
+
+### Step 6: Coordinate the team
+
+As the orchestrator, you are responsible for:
+- **Monitoring progress** via `TaskList` — check what's completed, what's blocked
+- **Spawning additional agents** on demand as new work is identified
+- **Relaying information** between agents via `SendMessage` when needed
+- **Unblocking work** — if a task is blocked, check if the dependency is met and update accordingly
+- **Synthesizing results** — when all tasks are complete, summarize outcomes for the user
+
+Respond to teammate messages as they come in. When teammates finish and go idle, check if there's more work to assign or if the team's goal is met.
+
+### Step 7: Clean up
+
+When all work is complete:
+1. Send shutdown requests to all teammates
+2. Clean up the team with `TeamDelete`
+3. Summarize the results to the user
 
 ## Important Notes
 
+- **You are the only agent that can spawn teammates** — do not instruct agents to spawn other agents
 - **openteams is config-only** — used only for artifact generation, NOT for runtime coordination
 - **Use Claude Code native teams** for all runtime: `TeamCreate`, `TaskCreate`, `TaskUpdate`, `SendMessage`
 - All agents must be spawned with `team_name` so they share the team's task list
 - If MAP is enabled in `.swarm/claude-swarm/config.json`, lifecycle events are handled automatically by hooks
+- Start with the most critical roles first — you don't need to spawn all roles from the topology at once
+- Keep team size manageable (3-5 agents) — spawn more only when genuinely needed

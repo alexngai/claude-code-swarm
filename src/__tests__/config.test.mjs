@@ -16,7 +16,11 @@ describe("config", () => {
 
   describe("readConfig", () => {
     let tmpDir;
-    beforeEach(() => { tmpDir = makeTmpDir(); });
+    let noGlobal;
+    beforeEach(() => {
+      tmpDir = makeTmpDir();
+      noGlobal = path.join(tmpDir, "no-global.json");
+    });
     afterEach(() => { cleanupTmpDir(tmpDir); });
 
     it("reads and parses a valid config file", () => {
@@ -24,7 +28,7 @@ describe("config", () => {
         template: "gsd",
         map: { enabled: true, server: "ws://example.com:9090" },
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.template).toBe("gsd");
       expect(config.map.enabled).toBe(true);
       expect(config.map.server).toBe("ws://example.com:9090");
@@ -35,7 +39,7 @@ describe("config", () => {
         template: "test",
         map: { enabled: true },
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.map.server).toBe(DEFAULTS.mapServer);
       expect(config.map.scope).toBe("");
       expect(config.map.systemId).toBe(DEFAULTS.mapSystemId);
@@ -44,13 +48,13 @@ describe("config", () => {
 
     it("normalizes sessionlog fields with defaults", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.sessionlog.enabled).toBe(false);
       expect(config.sessionlog.sync).toBe("off");
     });
 
     it("returns defaults when file does not exist", () => {
-      const config = readConfig(path.join(tmpDir, "nonexistent.json"));
+      const config = readConfig(path.join(tmpDir, "nonexistent.json"), noGlobal);
       expect(config.template).toBe("");
       expect(config.map.enabled).toBe(false);
       expect(config.sessionlog.enabled).toBe(false);
@@ -58,20 +62,20 @@ describe("config", () => {
 
     it("returns defaults when file contains invalid JSON", () => {
       const configPath = writeFile(tmpDir, "config.json", "not json{{{");
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.template).toBe("");
       expect(config.map.enabled).toBe(false);
     });
 
     it("returns defaults when file is empty", () => {
       const configPath = writeFile(tmpDir, "config.json", "");
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.template).toBe("");
     });
 
     it("handles config with only template field", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "my-team" }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.template).toBe("my-team");
       expect(config.map.enabled).toBe(false);
     });
@@ -81,7 +85,7 @@ describe("config", () => {
         template: "test",
         map: { enabled: true, scope: "custom:scope" },
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.map.scope).toBe("custom:scope");
     });
 
@@ -89,7 +93,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { server: "ws://example.com:9090" },
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.map.enabled).toBe(true);
     });
 
@@ -97,8 +101,93 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         template: "test",
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.map.enabled).toBe(false);
+    });
+  });
+
+  describe("global config fallback", () => {
+    let tmpDir;
+    beforeEach(() => { tmpDir = makeTmpDir(); });
+    afterEach(() => { cleanupTmpDir(tmpDir); });
+
+    it("reads from global config when no project config exists", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global-server:8080" },
+      }));
+      const config = readConfig(path.join(tmpDir, "nonexistent.json"), globalPath);
+      expect(config.map.enabled).toBe(true);
+      expect(config.map.server).toBe("ws://global-server:8080");
+    });
+
+    it("project config overrides global config", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        template: "global-template",
+        map: { server: "ws://global-server:8080", systemId: "global-system" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        template: "project-template",
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.template).toBe("project-template");
+      // map.server from global still applies (project didn't set it)
+      expect(config.map.server).toBe("ws://global-server:8080");
+      expect(config.map.systemId).toBe("global-system");
+    });
+
+    it("project config map fields override global map fields", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global:8080", sidecar: "persistent" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        map: { server: "ws://project:9090" },
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.server).toBe("ws://project:9090");
+      // sidecar from global still applies
+      expect(config.map.sidecar).toBe("persistent");
+    });
+
+    it("env vars override both global and project config", () => {
+      process.env.SWARM_MAP_SERVER = "ws://env-server:7070";
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        map: { server: "ws://global:8080" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        map: { server: "ws://project:9090" },
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.map.server).toBe("ws://env-server:7070");
+      delete process.env.SWARM_MAP_SERVER;
+    });
+
+    it("works when global config is missing", () => {
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        template: "test",
+      }));
+      const config = readConfig(projectPath, path.join(tmpDir, "no-global.json"));
+      expect(config.template).toBe("test");
+    });
+
+    it("works when both configs are missing", () => {
+      const config = readConfig(
+        path.join(tmpDir, "no-project.json"),
+        path.join(tmpDir, "no-global.json"),
+      );
+      expect(config.template).toBe("");
+      expect(config.map.enabled).toBe(false);
+    });
+
+    it("deep merges sessionlog settings from global", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        sessionlog: { enabled: true, sync: "full" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        sessionlog: { sync: "metrics" },
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.sessionlog.enabled).toBe(true);
+      expect(config.sessionlog.sync).toBe("metrics");
     });
   });
 
@@ -122,10 +211,12 @@ describe("config", () => {
 
   describe("env var overrides", () => {
     let tmpDir;
+    let noGlobal;
     const savedEnv = {};
 
     beforeEach(() => {
       tmpDir = makeTmpDir();
+      noGlobal = path.join(tmpDir, "no-global.json");
       for (const key of Object.keys(process.env)) {
         if (key.startsWith("SWARM_")) {
           savedEnv[key] = process.env[key];
@@ -152,7 +243,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         template: "file-template",
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.template).toBe("env-template");
     });
 
@@ -161,7 +252,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { enabled: false },
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.map.enabled).toBe(true);
     });
 
@@ -169,13 +260,13 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({}));
 
       process.env.SWARM_MAP_ENABLED = "1";
-      expect(readConfig(configPath).map.enabled).toBe(true);
+      expect(readConfig(configPath, noGlobal).map.enabled).toBe(true);
 
       process.env.SWARM_MAP_ENABLED = "yes";
-      expect(readConfig(configPath).map.enabled).toBe(true);
+      expect(readConfig(configPath, noGlobal).map.enabled).toBe(true);
 
       process.env.SWARM_MAP_ENABLED = "YES";
-      expect(readConfig(configPath).map.enabled).toBe(true);
+      expect(readConfig(configPath, noGlobal).map.enabled).toBe(true);
     });
 
     it("SWARM_MAP_ENABLED=false overrides true in config", () => {
@@ -183,7 +274,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { enabled: true },
       }));
-      expect(readConfig(configPath).map.enabled).toBe(false);
+      expect(readConfig(configPath, noGlobal).map.enabled).toBe(false);
     });
 
     it("SWARM_MAP_ENABLED=false disables even when server is configured", () => {
@@ -191,13 +282,13 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { server: "ws://example.com:9090" },
       }));
-      expect(readConfig(configPath).map.enabled).toBe(false);
+      expect(readConfig(configPath, noGlobal).map.enabled).toBe(false);
     });
 
     it("SWARM_MAP_SERVER implicitly enables MAP", () => {
       process.env.SWARM_MAP_SERVER = "ws://env-server:9090";
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({}));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.map.enabled).toBe(true);
       expect(config.map.server).toBe("ws://env-server:9090");
     });
@@ -207,7 +298,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { server: "ws://file-server:8080" },
       }));
-      expect(readConfig(configPath).map.server).toBe("ws://env-server:9090");
+      expect(readConfig(configPath, noGlobal).map.server).toBe("ws://env-server:9090");
     });
 
     it("SWARM_MAP_SCOPE overrides config file", () => {
@@ -215,7 +306,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { scope: "custom:file-scope" },
       }));
-      expect(readConfig(configPath).map.scope).toBe("custom:env-scope");
+      expect(readConfig(configPath, noGlobal).map.scope).toBe("custom:env-scope");
     });
 
     it("SWARM_MAP_SYSTEM_ID overrides config file", () => {
@@ -223,7 +314,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { systemId: "file-system" },
       }));
-      expect(readConfig(configPath).map.systemId).toBe("env-system");
+      expect(readConfig(configPath, noGlobal).map.systemId).toBe("env-system");
     });
 
     it("SWARM_MAP_SIDECAR overrides config file", () => {
@@ -231,7 +322,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         map: { sidecar: "session" },
       }));
-      expect(readConfig(configPath).map.sidecar).toBe("persistent");
+      expect(readConfig(configPath, noGlobal).map.sidecar).toBe("persistent");
     });
 
     it("SWARM_SESSIONLOG_ENABLED overrides config file", () => {
@@ -239,7 +330,7 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         sessionlog: { enabled: false },
       }));
-      expect(readConfig(configPath).sessionlog.enabled).toBe(true);
+      expect(readConfig(configPath, noGlobal).sessionlog.enabled).toBe(true);
     });
 
     it("SWARM_SESSIONLOG_SYNC overrides config file", () => {
@@ -247,13 +338,13 @@ describe("config", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
         sessionlog: { sync: "off" },
       }));
-      expect(readConfig(configPath).sessionlog.sync).toBe("full");
+      expect(readConfig(configPath, noGlobal).sessionlog.sync).toBe("full");
     });
 
     it("env vars override defaults when no config file exists", () => {
       process.env.SWARM_MAP_SERVER = "ws://env-server:9090";
       process.env.SWARM_MAP_SYSTEM_ID = "env-system";
-      const config = readConfig(path.join(tmpDir, "nonexistent.json"));
+      const config = readConfig(path.join(tmpDir, "nonexistent.json"), noGlobal);
       expect(config.map.enabled).toBe(true);
       expect(config.map.server).toBe("ws://env-server:9090");
       expect(config.map.systemId).toBe("env-system");
@@ -264,7 +355,7 @@ describe("config", () => {
         template: "file-template",
         map: { server: "ws://file-server:8080" },
       }));
-      const config = readConfig(configPath);
+      const config = readConfig(configPath, noGlobal);
       expect(config.template).toBe("file-template");
       expect(config.map.server).toBe("ws://file-server:8080");
     });

@@ -78,13 +78,13 @@ export function formatTeamLoadedContext(generatedDir, templatePath, teamName) {
     "1. Call **TeamCreate** to set up a native Claude Code team"
   );
   lines.push(
-    "2. Spawn a **coordinator agent** (the root role) as a team member with `team_name`"
+    "2. Create tasks via **TaskCreate** based on the user's goal"
   );
   lines.push(
-    "3. The coordinator creates tasks via **TaskCreate** and spawns agents with `team_name`"
+    "3. Spawn agents directly as teammates (only you can spawn — teammates cannot spawn other teammates)"
   );
   lines.push(
-    "4. All agents coordinate via **SendMessage** and track progress via **TaskUpdate**"
+    "4. Coordinate the team via **SendMessage** and track progress via **TaskUpdate**"
   );
   lines.push("");
   lines.push(

@@ -1,12 +1,14 @@
 /**
  * config.mjs — Shared configuration parsing for claude-code-swarm
  *
- * Reads .swarm/claude/config.json and provides normalized config with defaults.
+ * Reads config with priority: env vars > project config > global config > defaults.
+ * Project config: .swarm/claude-swarm/config.json (in cwd)
+ * Global config:  ~/.claude-swarm/config.json
  * Used by bootstrap, hooks, sidecar, and team-loader.
  */
 
 import fs from "fs";
-import { CONFIG_PATH } from "./paths.mjs";
+import { CONFIG_PATH, GLOBAL_CONFIG_PATH } from "./paths.mjs";
 
 export const DEFAULTS = {
   mapServer: "ws://localhost:8080",
@@ -34,17 +36,48 @@ function envStr(name) {
 }
 
 /**
- * Read and normalize .swarm/claude/config.json config.
- * Priority: SWARM_* env vars > config file > defaults.
+ * Read a JSON config file. Returns empty object on any error.
+ */
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Deep merge two plain objects. Source values override target values.
+ * Only merges plain objects — arrays and primitives are replaced.
+ */
+function deepMerge(target, source) {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    if (
+      source[key] !== null &&
+      typeof source[key] === "object" &&
+      !Array.isArray(source[key]) &&
+      typeof result[key] === "object" &&
+      result[key] !== null &&
+      !Array.isArray(result[key])
+    ) {
+      result[key] = deepMerge(result[key], source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+
+/**
+ * Read and normalize config.
+ * Priority: SWARM_* env vars > project config > global config > defaults.
  * Never throws — returns defaults on any error.
  */
-export function readConfig(configPath = CONFIG_PATH) {
-  let raw = {};
-  try {
-    raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  } catch {
-    // Missing or invalid config file — raw stays empty, defaults apply
-  }
+export function readConfig(configPath = CONFIG_PATH, globalPath = GLOBAL_CONFIG_PATH) {
+  const globalRaw = readJsonFile(globalPath);
+  const projectRaw = readJsonFile(configPath);
+  const raw = deepMerge(globalRaw, projectRaw);
 
   const server = envStr("SWARM_MAP_SERVER") ?? raw.map?.server ?? undefined;
   const explicitEnabled = envBool("SWARM_MAP_ENABLED") ?? (raw.map?.enabled === true ? true : undefined);

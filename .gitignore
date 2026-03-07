@@ -1,4 +1,3 @@
-.generated/
 node_modules/
 agents/
 e2e/logs/

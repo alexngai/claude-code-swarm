@@ -136,12 +136,19 @@ export function generateTeamArtifacts(templatePath, outputDir) {
     const template = ot.TemplateLoader.load(templatePath);
     const teamName = template.manifest.name || path.basename(templatePath);
 
-    // Generate SKILL.md
-    const skillContent = ot.generateSkillMd(template, { teamName });
+    // Generate SKILL.md (exclude spawn rules — main agent is the only spawner)
+    const skillContent = ot.generateSkillMd(template, {
+      teamName,
+      includeSpawnRules: false,
+    });
     fs.writeFileSync(path.join(outputDir, "SKILL.md"), skillContent, "utf-8");
 
-    // Generate agent prompts
-    const prompts = ot.generateAgentPrompts(template, { teamName });
+    // Generate agent prompts (exclude spawn/CLI — teammates can't spawn, use native tools)
+    const prompts = ot.generateAgentPrompts(template, {
+      teamName,
+      includeSpawnSection: false,
+      includeCliSection: false,
+    });
     const agentsDir = path.join(outputDir, "agents");
     fs.mkdirSync(agentsDir, { recursive: true });
     for (const agentPrompt of prompts) {

@@ -57,19 +57,19 @@ describe("agent-generator", () => {
       expect(tools).toContain("SendMessage");
     });
 
-    it("adds Write, Edit, Agent, TaskCreate for root position", () => {
+    it("adds Write, Edit, TaskCreate for root position (no Agent)", () => {
       const tools = determineTools("lead", minManifest, "root");
       expect(tools).toContain("Write");
       expect(tools).toContain("Edit");
-      expect(tools).toContain("Agent");
       expect(tools).toContain("TaskCreate");
+      expect(tools).not.toContain("Agent");
     });
 
-    it("adds Write, Edit, Agent, TaskCreate for companion position", () => {
+    it("adds Write, Edit, TaskCreate for companion position (no Agent)", () => {
       const tools = determineTools("helper", minManifest, "companion");
       expect(tools).toContain("Write");
-      expect(tools).toContain("Agent");
       expect(tools).toContain("TaskCreate");
+      expect(tools).not.toContain("Agent");
     });
 
     it("does not add Write for regular spawned position", () => {
@@ -78,17 +78,10 @@ describe("agent-generator", () => {
       expect(tools).not.toContain("Edit");
     });
 
-    it("adds Agent when spawn_rules allow spawning", () => {
+    it("does not add Agent for spawn_rules (teammates cannot spawn)", () => {
       const manifest = { topology: { spawn_rules: { planner: ["executor"] } } };
       const tools = determineTools("planner", manifest, "spawned");
-      expect(tools).toContain("Agent");
-    });
-
-    it("does not duplicate Agent if already present for root", () => {
-      const manifest = { topology: { spawn_rules: { lead: ["dev"] } } };
-      const tools = determineTools("lead", manifest, "root");
-      const agentCount = tools.filter((t) => t === "Agent").length;
-      expect(agentCount).toBe(1);
+      expect(tools).not.toContain("Agent");
     });
 
     it("adds Write, Edit for executor role", () => {
