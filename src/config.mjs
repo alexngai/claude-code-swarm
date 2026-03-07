@@ -47,60 +47,37 @@ function readJsonFile(filePath) {
 }
 
 /**
- * Deep merge two plain objects. Source values override target values.
- * Only merges plain objects — arrays and primitives are replaced.
- */
-function deepMerge(target, source) {
-  const result = { ...target };
-  for (const key of Object.keys(source)) {
-    if (
-      source[key] !== null &&
-      typeof source[key] === "object" &&
-      !Array.isArray(source[key]) &&
-      typeof result[key] === "object" &&
-      result[key] !== null &&
-      !Array.isArray(result[key])
-    ) {
-      result[key] = deepMerge(result[key], source[key]);
-    } else {
-      result[key] = source[key];
-    }
-  }
-  return result;
-}
-
-/**
- * Read and normalize config.
- * Priority: SWARM_* env vars > project config > global config > defaults.
+ * Read and normalize config with tiered resolution.
+ * Priority: SWARM_* env vars > project config file > global config file > defaults.
  * Never throws — returns defaults on any error.
  */
-export function readConfig(configPath = CONFIG_PATH, globalPath = GLOBAL_CONFIG_PATH) {
-  const globalRaw = readJsonFile(globalPath);
-  const projectRaw = readJsonFile(configPath);
-  const raw = deepMerge(globalRaw, projectRaw);
+export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_CONFIG_PATH) {
+  const global = readJsonFile(globalConfigPath);
+  const project = readJsonFile(configPath);
 
-  const server = envStr("SWARM_MAP_SERVER") ?? raw.map?.server ?? undefined;
-  const explicitEnabled = envBool("SWARM_MAP_ENABLED") ?? (raw.map?.enabled === true ? true : undefined);
+  // Project overrides global for each field (not deep merge — per-field fallthrough)
+  const server = envStr("SWARM_MAP_SERVER") ?? project.map?.server ?? global.map?.server ?? undefined;
+  const explicitEnabled = envBool("SWARM_MAP_ENABLED") ?? (project.map?.enabled === true ? true : undefined) ?? (global.map?.enabled === true ? true : undefined);
 
   // MAP is enabled if explicitly set OR if a server is configured
   const mapEnabled = explicitEnabled ?? (server !== undefined);
 
   return {
-    template: envStr("SWARM_TEMPLATE") ?? raw.template ?? "",
+    template: envStr("SWARM_TEMPLATE") ?? project.template ?? global.template ?? "",
     map: {
       enabled: mapEnabled,
       server: server || DEFAULTS.mapServer,
-      scope: envStr("SWARM_MAP_SCOPE") ?? raw.map?.scope ?? "",
-      systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? raw.map?.systemId ?? DEFAULTS.mapSystemId,
-      sidecar: envStr("SWARM_MAP_SIDECAR") ?? raw.map?.sidecar ?? DEFAULTS.mapSidecar,
+      scope: envStr("SWARM_MAP_SCOPE") ?? project.map?.scope ?? global.map?.scope ?? "",
+      systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? project.map?.systemId ?? global.map?.systemId ?? DEFAULTS.mapSystemId,
+      sidecar: envStr("SWARM_MAP_SIDECAR") ?? project.map?.sidecar ?? global.map?.sidecar ?? DEFAULTS.mapSidecar,
       auth: {
-        token: envStr("SWARM_MAP_AUTH_TOKEN") ?? raw.map?.auth?.token ?? "",
-        param: envStr("SWARM_MAP_AUTH_PARAM") ?? raw.map?.auth?.param ?? "token",
+        token: envStr("SWARM_MAP_AUTH_TOKEN") ?? project.map?.auth?.token ?? global.map?.auth?.token ?? "",
+        param: envStr("SWARM_MAP_AUTH_PARAM") ?? project.map?.auth?.param ?? global.map?.auth?.param ?? "token",
       },
     },
     sessionlog: {
-      enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(raw.sessionlog?.enabled),
-      sync: envStr("SWARM_SESSIONLOG_SYNC") ?? raw.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
+      enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(project.sessionlog?.enabled ?? global.sessionlog?.enabled),
+      sync: envStr("SWARM_SESSIONLOG_SYNC") ?? project.sessionlog?.sync ?? global.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
     },
   };
 }

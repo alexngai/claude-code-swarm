@@ -38,10 +38,12 @@ describe("paths (current environment)", () => {
     expect(paths.SWARM_DIR).toBe(".swarm/claude-swarm");
   });
 
-  it("GLOBAL_CONFIG_PATH is under home directory", () => {
-    expect(paths.GLOBAL_CONFIG_PATH).toBe(
-      path.join(os.homedir(), ".claude-swarm", "config.json")
-    );
+  it("GLOBAL_CONFIG_DIR is under ~/.claude-swarm/", () => {
+    expect(paths.GLOBAL_CONFIG_DIR).toBe(path.join(os.homedir(), ".claude-swarm"));
+  });
+
+  it("GLOBAL_CONFIG_PATH is config.json under GLOBAL_CONFIG_DIR", () => {
+    expect(paths.GLOBAL_CONFIG_PATH).toBe(path.join(os.homedir(), ".claude-swarm", "config.json"));
   });
 
   it("TEAMS_DIR is under TMP_DIR", () => {

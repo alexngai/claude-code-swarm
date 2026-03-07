@@ -27,7 +27,11 @@ import { fileURLToPath } from "url";
 
 export const SWARM_DIR = ".swarm/claude-swarm";
 export const CONFIG_PATH = ".swarm/claude-swarm/config.json";
-export const GLOBAL_CONFIG_PATH = path.join(os.homedir(), ".claude-swarm", "config.json");
+
+// Global config directory (~/.claude-swarm/)
+export const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-swarm");
+export const GLOBAL_CONFIG_PATH = path.join(GLOBAL_CONFIG_DIR, "config.json");
+
 export const SESSIONLOG_DIR = path.join(".git", "sessionlog-sessions");
 
 // --- Global base directory ---
