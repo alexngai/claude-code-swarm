@@ -8,7 +8,7 @@
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
-import { SESSIONLOG_DIR, SESSIONLOG_STATE_PATH } from "./paths.mjs";
+import { SESSIONLOG_DIR, SESSIONLOG_STATE_PATH, sessionPaths } from "./paths.mjs";
 import { resolveTeamName } from "./config.mjs";
 import { sendToSidecar, ensureSidecar } from "./sidecar-client.mjs";
 import { fireAndForgetTrajectory } from "./map-connection.mjs";
@@ -123,8 +123,9 @@ export function buildTrajectoryCheckpoint(state, syncLevel, config) {
 
 /**
  * Full sessionlog sync flow: find session, build checkpoint, send to MAP.
+ * When sessionId is provided, uses per-session sidecar paths.
  */
-export async function syncSessionlog(config) {
+export async function syncSessionlog(config, sessionId) {
   const syncLevel = config.sessionlog?.sync || "off";
   if (syncLevel === "off") return;
 
@@ -132,23 +133,27 @@ export async function syncSessionlog(config) {
   if (!session) return;
 
   const checkpoint = buildTrajectoryCheckpoint(session, syncLevel, config);
+  const sPaths = sessionPaths(sessionId);
 
   // Try sidecar trajectory-checkpoint command
-  const sent = await sendToSidecar({
-    action: "trajectory-checkpoint",
-    checkpoint,
-  });
+  const sent = await sendToSidecar(
+    { action: "trajectory-checkpoint", checkpoint },
+    sPaths.socketPath
+  );
 
   if (!sent) {
-    const recovered = await ensureSidecar(config);
+    const recovered = await ensureSidecar(config, sessionId);
     if (recovered) {
-      await sendToSidecar({ action: "trajectory-checkpoint", checkpoint });
+      await sendToSidecar(
+        { action: "trajectory-checkpoint", checkpoint },
+        sPaths.socketPath
+      );
     } else {
       await fireAndForgetTrajectory(config, checkpoint);
     }
   }
 
-  // Cache latest state
+  // Cache latest state (shared, not per-session)
   try {
     fs.mkdirSync(path.dirname(SESSIONLOG_STATE_PATH), { recursive: true });
     fs.writeFileSync(

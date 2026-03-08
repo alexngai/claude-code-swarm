@@ -2,13 +2,14 @@
  * sidecar-client.mjs — UNIX socket client for communicating with the MAP sidecar
  *
  * Provides send, health check, and recovery logic used by hooks.
+ * Supports per-session sidecar instances via sessionId parameter.
  */
 
 import fs from "fs";
 import path from "path";
 import net from "net";
 import { spawn } from "child_process";
-import { SOCKET_PATH, PID_PATH, pluginDir } from "./paths.mjs";
+import { SOCKET_PATH, PID_PATH, pluginDir, sessionPaths } from "./paths.mjs";
 import { resolveScope, resolveMapServer, DEFAULTS } from "./config.mjs";
 
 /**
@@ -33,9 +34,9 @@ export function sendToSidecar(command, socketPath = SOCKET_PATH) {
 /**
  * Check if the sidecar process is alive via PID file.
  */
-export function isSidecarAlive() {
+export function isSidecarAlive(pidPath = PID_PATH) {
   try {
-    const pid = parseInt(fs.readFileSync(PID_PATH, "utf-8").trim());
+    const pid = parseInt(fs.readFileSync(pidPath, "utf-8").trim());
     process.kill(pid, 0);
     return true;
   } catch {
@@ -46,35 +47,38 @@ export function isSidecarAlive() {
 /**
  * Start the sidecar as a detached background process.
  * Writes PID file and waits for socket to appear (up to 2s).
+ * When sessionId is provided, the sidecar uses per-session paths.
  * Returns true if sidecar is ready.
  */
-export async function startSidecar(config, pluginDirOverride) {
+export async function startSidecar(config, pluginDirOverride, sessionId) {
   const dir = pluginDirOverride || pluginDir();
   const sidecarPath = path.join(dir, "scripts", "map-sidecar.mjs");
+  const sPaths = sessionPaths(sessionId);
 
   const server = resolveMapServer(config);
   const scope = resolveScope(config);
   const systemId = config.map?.systemId || DEFAULTS.mapSystemId;
 
   try {
-    fs.mkdirSync(path.dirname(PID_PATH), { recursive: true });
+    fs.mkdirSync(path.dirname(sPaths.pidPath), { recursive: true });
 
-    const child = spawn(
-      "node",
-      [sidecarPath, "--server", server, "--scope", scope, "--system-id", systemId],
-      {
-        detached: true,
-        stdio: ["ignore", "ignore", "ignore"],
-      }
-    );
+    const args = [sidecarPath, "--server", server, "--scope", scope, "--system-id", systemId];
+    if (sessionId) {
+      args.push("--session-id", sessionId);
+    }
+
+    const child = spawn("node", args, {
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
     child.unref();
-    fs.writeFileSync(PID_PATH, String(child.pid));
+    fs.writeFileSync(sPaths.pidPath, String(child.pid));
 
     // Wait for socket to appear (up to 2s)
     for (let i = 0; i < 8; i++) {
       await new Promise((r) => setTimeout(r, 250));
-      if (fs.existsSync(SOCKET_PATH)) {
-        const ok = await sendToSidecar({ action: "ping" });
+      if (fs.existsSync(sPaths.socketPath)) {
+        const ok = await sendToSidecar({ action: "ping" }, sPaths.socketPath);
         if (ok) return true;
       }
     }
@@ -87,21 +91,23 @@ export async function startSidecar(config, pluginDirOverride) {
 
 /**
  * Kill an existing sidecar process (for session restart).
+ * When sessionId is provided, kills only that session's sidecar.
  */
-export function killSidecar() {
+export function killSidecar(sessionId) {
+  const sPaths = sessionPaths(sessionId);
   try {
-    const pid = parseInt(fs.readFileSync(PID_PATH, "utf-8").trim());
+    const pid = parseInt(fs.readFileSync(sPaths.pidPath, "utf-8").trim());
     process.kill(pid);
   } catch {
     // Process already dead or PID file missing
   }
   try {
-    fs.unlinkSync(PID_PATH);
+    fs.unlinkSync(sPaths.pidPath);
   } catch {
     // ignore
   }
   try {
-    fs.unlinkSync(SOCKET_PATH);
+    fs.unlinkSync(sPaths.socketPath);
   } catch {
     // ignore
   }
@@ -111,21 +117,23 @@ export function killSidecar() {
  * Ensure the sidecar is running. If not, attempt recovery.
  * Returns true if sidecar is available after this call.
  */
-export async function ensureSidecar(config) {
+export async function ensureSidecar(config, sessionId) {
+  const sPaths = sessionPaths(sessionId);
+
   // 1. Try pinging
-  const alive = await sendToSidecar({ action: "ping" });
+  const alive = await sendToSidecar({ action: "ping" }, sPaths.socketPath);
   if (alive) return true;
 
   // 2. Only attempt recovery in session mode
   if (config.map?.sidecar === "persistent") return false;
 
   // 3. Check PID
-  if (isSidecarAlive()) {
+  if (isSidecarAlive(sPaths.pidPath)) {
     // Process exists but socket not ready — wait briefly
     await new Promise((r) => setTimeout(r, 500));
-    return sendToSidecar({ action: "ping" });
+    return sendToSidecar({ action: "ping" }, sPaths.socketPath);
   }
 
   // 4. Restart sidecar
-  return startSidecar(config);
+  return startSidecar(config, undefined, sessionId);
 }

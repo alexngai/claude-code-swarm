@@ -12,9 +12,11 @@ import fs from "fs";
  */
 export function formatBootstrapContext({
   template,
+  team,
   mapStatus,
   sessionlogStatus,
   sessionlogSync,
+  opentasksStatus,
 }) {
   const lines = ["## Claude Code Swarm", ""];
 
@@ -40,7 +42,27 @@ export function formatBootstrapContext({
     }
   }
 
+  if (opentasksStatus) {
+    lines.push(`opentasks: ${opentasksStatus}`);
+  }
+
   lines.push("");
+
+  if (team) {
+    // Embed the SKILL.md content directly so the agent has the topology immediately
+    const skillPath = `${team.outputDir}/SKILL.md`;
+    try {
+      const skillContent = fs.readFileSync(skillPath, "utf-8");
+      lines.push(skillContent);
+      lines.push("");
+    } catch {
+      // SKILL.md not readable — just show the path
+    }
+
+    lines.push(`Agent prompts: \`${team.outputDir}/agents/<role>.md\``);
+    lines.push("");
+  }
+
   lines.push(
     "Use `/swarm` to launch the team (creates a native Claude Code team)."
   );

@@ -7,16 +7,20 @@
  * lifecycle, and typed message payloads for task lifecycle.
  * No custom swarm.* event types.
  *
+ * All handlers extract session_id from hook stdin data and pass it
+ * through to sendCommand/emitPayload for per-session sidecar routing.
+ *
  * Actions:
- *   inject          — Read inbox, format as markdown, output to stdout
- *   agent-spawning  — Spawn agent in MAP + emit task.dispatched payload
- *   agent-completed — Done agent in MAP + emit task.completed payload
- *   turn-completed  — Update sidecar state to idle
- *   sessionlog-sync — Sync sessionlog state to MAP
- *   subagent-start  — Spawn subagent in MAP
- *   subagent-stop   — Done subagent in MAP
- *   teammate-idle   — Update teammate state to idle
- *   task-completed  — Emit task.completed payload
+ *   inject              — Read inbox, format as markdown, forward task.* to opentasks, output to stdout
+ *   agent-spawning      — Spawn agent in MAP + emit task.dispatched payload
+ *   agent-completed     — Done agent in MAP + emit task.completed payload
+ *   turn-completed      — Update sidecar state to idle
+ *   sessionlog-sync     — Sync sessionlog state to MAP
+ *   subagent-start      — Spawn subagent in MAP
+ *   subagent-stop       — Done subagent in MAP
+ *   teammate-idle       — Update teammate state to idle
+ *   task-completed      — Emit task.completed payload
+ *   opentasks-mcp-used  — Bridge opentasks MCP tool use → MAP task sync payload
  *
  * Usage: node map-hook.mjs <action>
  *        Hook event data is read from stdin (JSON).
@@ -25,6 +29,7 @@
 import { readConfig, resolveTeamName } from "../src/config.mjs";
 import { readRoles, matchRole } from "../src/roles.mjs";
 import { readInbox, clearInbox, formatInboxAsMarkdown } from "../src/inbox.mjs";
+import { sessionPaths } from "../src/paths.mjs";
 import {
   sendCommand,
   emitPayload,
@@ -36,8 +41,11 @@ import {
   buildTaskDispatchedPayload,
   buildTaskCompletedPayload,
   buildTaskStatusPayload,
+  buildTaskSyncPayload,
+  buildOpentasksSyncPayload,
 } from "../src/map-events.mjs";
 import { syncSessionlog } from "../src/sessionlog.mjs";
+import { findSocketPath, pushSyncEvent } from "../src/opentasks-client.mjs";
 
 const action = process.argv[2];
 
@@ -60,9 +68,27 @@ function readStdin() {
 // ── Action handlers ───────────────────────────────────────────────────────────
 
 async function handleInject() {
-  const messages = readInbox();
+  // Read stdin to get session_id for per-session inbox routing
+  const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
+  const sPaths = sessionPaths(sessionId);
+
+  const messages = readInbox(sPaths.inboxPath);
   if (!messages.length) return;
-  clearInbox();
+  clearInbox(sPaths.inboxPath);
+
+  // Forward task.* events to opentasks graph if enabled
+  const config = readConfig();
+  if (config.opentasks?.enabled) {
+    const socketPath = findSocketPath();
+    const taskEvents = messages.filter(
+      (m) => m.payload?.type?.startsWith("task.")
+    );
+    for (const evt of taskEvents) {
+      pushSyncEvent(socketPath, evt.payload).catch(() => {});
+    }
+  }
+
   const output = formatInboxAsMarkdown(messages);
   if (output) process.stdout.write(output);
 }
@@ -70,6 +96,7 @@ async function handleInject() {
 async function handleAgentSpawning() {
   const config = readConfig();
   const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
   const roles = readRoles();
 
   const agentName = hookData.tool_input?.name || hookData.tool_input?.description || "";
@@ -78,16 +105,17 @@ async function handleAgentSpawning() {
 
   // Spawn agent in MAP via sidecar (server auto-emits agent_registered)
   if (matchedRole) {
-    await sendCommand(config, buildSpawnCommand(agentName, matchedRole, teamName, hookData));
+    await sendCommand(config, buildSpawnCommand(agentName, matchedRole, teamName, hookData), sessionId);
   }
 
   // Emit task.dispatched as a regular MAP message
-  await emitPayload(config, buildTaskDispatchedPayload(hookData, teamName, matchedRole, agentName));
+  await emitPayload(config, buildTaskDispatchedPayload(hookData, teamName, matchedRole, agentName), undefined, sessionId);
 }
 
 async function handleAgentCompleted() {
   const config = readConfig();
   const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
   const roles = readRoles();
 
   const agentName = hookData.tool_input?.name || hookData.tool_input?.description || "";
@@ -96,48 +124,55 @@ async function handleAgentCompleted() {
 
   // Mark agent done in MAP via sidecar (server auto-emits agent_unregistered)
   if (matchedRole) {
-    await sendCommand(config, buildDoneCommand(agentName, matchedRole, teamName));
+    await sendCommand(config, buildDoneCommand(agentName, matchedRole, teamName), sessionId);
   }
 
   // Emit task.completed as a regular MAP message
-  await emitPayload(config, buildTaskCompletedPayload(hookData, teamName, matchedRole, agentName));
+  await emitPayload(config, buildTaskCompletedPayload(hookData, teamName, matchedRole, agentName), undefined, sessionId);
 }
 
 async function handleTurnCompleted() {
   const config = readConfig();
   const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
 
   // Update sidecar state to idle (server auto-emits agent_state_changed)
   const stopReason = hookData.stop_reason || "end_turn";
-  await sendCommand(config, buildStateCommand(null, "idle", { lastStopReason: stopReason }));
+  await sendCommand(config, buildStateCommand(null, "idle", { lastStopReason: stopReason }), sessionId);
 }
 
 async function handleSessionlogSync() {
   const config = readConfig();
-  await syncSessionlog(config);
+  const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
+
+  await syncSessionlog(config, sessionId);
 }
 
 async function handleSubagentStart() {
   const config = readConfig();
   const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
   const teamName = resolveTeamName(config);
 
   // Spawn subagent in MAP (server auto-emits agent_registered)
-  await sendCommand(config, buildSubagentSpawnCommand(hookData, teamName));
+  await sendCommand(config, buildSubagentSpawnCommand(hookData, teamName), sessionId);
 }
 
 async function handleSubagentStop() {
   const config = readConfig();
   const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
   const teamName = resolveTeamName(config);
 
   // Mark subagent done (server auto-emits agent_unregistered)
-  await sendCommand(config, buildSubagentDoneCommand(hookData, teamName));
+  await sendCommand(config, buildSubagentDoneCommand(hookData, teamName), sessionId);
 }
 
 async function handleTeammateIdle() {
   const config = readConfig();
   const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
   const roles = readRoles();
   const teamName = resolveTeamName(config);
 
@@ -146,12 +181,13 @@ async function handleTeammateIdle() {
 
   // Update teammate state to idle (server auto-emits agent_state_changed)
   const agentId = matchedRole ? `${teamName}-${matchedRole}` : null;
-  await sendCommand(config, buildStateCommand(agentId, "idle"));
+  await sendCommand(config, buildStateCommand(agentId, "idle"), sessionId);
 }
 
 async function handleTaskCompleted() {
   const config = readConfig();
   const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
   const roles = readRoles();
   const teamName = resolveTeamName(config);
 
@@ -159,7 +195,17 @@ async function handleTaskCompleted() {
   const matchedRole = matchRole(teammateName, roles);
 
   // Emit task.completed as a regular MAP message
-  await emitPayload(config, buildTaskStatusPayload(hookData, teamName, matchedRole));
+  await emitPayload(config, buildTaskStatusPayload(hookData, teamName, matchedRole), undefined, sessionId);
+}
+
+async function handleOpentasksMcpUsed() {
+  const config = readConfig();
+  if (!config.map.enabled) return; // Only bridge when MAP is enabled
+
+  const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
+  const payload = buildOpentasksSyncPayload(hookData);
+  if (payload) await emitPayload(config, payload, undefined, sessionId);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -176,6 +222,7 @@ async function main() {
       case "subagent-stop": await handleSubagentStop(); break;
       case "teammate-idle": await handleTeammateIdle(); break;
       case "task-completed": await handleTaskCompleted(); break;
+      case "opentasks-mcp-used": await handleOpentasksMcpUsed(); break;
       default:
         process.stderr.write(`[map-hook] Unknown action: ${action}\n`);
     }

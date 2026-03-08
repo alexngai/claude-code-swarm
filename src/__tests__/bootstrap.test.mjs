@@ -32,9 +32,13 @@ vi.mock("../paths.mjs", async () => {
     PID_PATH: path.join(tmpDir, "sidecar.pid"),
     MAP_DIR: path.join(tmpDir, "map"),
     SIDECAR_LOG_PATH: path.join(tmpDir, "sidecar.log"),
+    OPENTASKS_DIR: path.join(tmpDir, "opentasks"),
     teamDir: vi.fn((name) => `${tmpDir}/.swarm/claude-swarm/tmp/teams/${name}`),
     ensureSwarmDir: vi.fn(),
     ensureMapDir: vi.fn(),
+    ensureOpentasksDir: vi.fn(),
+    ensureSessionDir: vi.fn(),
+    listSessionDirs: vi.fn().mockReturnValue([]),
     pluginDir: vi.fn(() => tmpDir),
   };
 });
@@ -54,6 +58,12 @@ const mockSwarmkit = {
   initProjectPackage: vi.fn().mockResolvedValue({ package: "openteams", success: true }),
 };
 
+vi.mock("../opentasks-client.mjs", () => ({
+  findSocketPath: vi.fn(() => "/tmp/test-daemon.sock"),
+  isDaemonAlive: vi.fn().mockResolvedValue(false),
+  ensureDaemon: vi.fn().mockResolvedValue(true),
+}));
+
 vi.mock("../swarmkit-resolver.mjs", () => ({
   resolveSwarmkit: vi.fn().mockResolvedValue(mockSwarmkit),
   configureNodePath: vi.fn(),
@@ -63,7 +73,8 @@ const { bootstrap } = await import("../bootstrap.mjs");
 const { readConfig } = await import("../config.mjs");
 const { killSidecar, startSidecar } = await import("../sidecar-client.mjs");
 const { checkSessionlogStatus, syncSessionlog } = await import("../sessionlog.mjs");
-const { pluginDir } = await import("../paths.mjs");
+const { pluginDir, ensureOpentasksDir, ensureSessionDir, listSessionDirs } = await import("../paths.mjs");
+const { findSocketPath, isDaemonAlive, ensureDaemon } = await import("../opentasks-client.mjs");
 const { resolveSwarmkit, configureNodePath } = await import("../swarmkit-resolver.mjs");
 
 describe("bootstrap", () => {
@@ -348,6 +359,118 @@ describe("bootstrap", () => {
       resolveSwarmkit.mockResolvedValue(null);
       await bootstrap();
       expect(ensureSwarmDir).toHaveBeenCalled();
+    });
+  });
+
+  describe("opentasks", () => {
+    it("returns opentasksStatus 'disabled' when not enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: false }));
+      const result = await bootstrap();
+      expect(result.opentasksStatus).toBe("disabled");
+    });
+
+    it("calls ensureOpentasksDir when enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true }));
+      await bootstrap();
+      expect(ensureOpentasksDir).toHaveBeenCalled();
+    });
+
+    it("calls ensureDaemon when enabled with autoStart", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true, opentasksAutoStart: true }));
+      await bootstrap();
+      expect(ensureDaemon).toHaveBeenCalled();
+    });
+
+    it("returns 'connected' when ensureDaemon succeeds", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true }));
+      ensureDaemon.mockResolvedValue(true);
+      const result = await bootstrap();
+      expect(result.opentasksStatus).toBe("connected");
+    });
+
+    it("returns 'starting' when ensureDaemon fails", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true }));
+      ensureDaemon.mockResolvedValue(false);
+      const result = await bootstrap();
+      expect(result.opentasksStatus).toBe("starting");
+    });
+
+    it("calls isDaemonAlive when autoStart is false", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true, opentasksAutoStart: false }));
+      isDaemonAlive.mockResolvedValue(true);
+      await bootstrap();
+      expect(isDaemonAlive).toHaveBeenCalled();
+      expect(ensureDaemon).not.toHaveBeenCalled();
+    });
+
+    it("returns 'connected' when daemon is already alive (autoStart false)", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true, opentasksAutoStart: false }));
+      isDaemonAlive.mockResolvedValue(true);
+      const result = await bootstrap();
+      expect(result.opentasksStatus).toBe("connected");
+    });
+
+    it("returns 'not running' when daemon is not alive (autoStart false)", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true, opentasksAutoStart: false }));
+      isDaemonAlive.mockResolvedValue(false);
+      const result = await bootstrap();
+      expect(result.opentasksStatus).toContain("not running");
+    });
+
+    it("checks opentasks package via swarmkit when enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: true }));
+      mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+      await bootstrap();
+      expect(mockSwarmkit.getInstalledVersion).toHaveBeenCalledWith("opentasks");
+    });
+
+    it("does not check opentasks package when disabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ opentasksEnabled: false }));
+      mockSwarmkit.getInstalledVersion.mockResolvedValue("1.0.0");
+      await bootstrap();
+      const calls = mockSwarmkit.getInstalledVersion.mock.calls.map((c) => c[0]);
+      expect(calls).not.toContain("opentasks");
+    });
+  });
+
+  describe("per-session sidecar", () => {
+    it("calls ensureSessionDir when sessionId provided and MAP enabled", async () => {
+      readConfig.mockReturnValue(makeConfig({ mapEnabled: true }));
+      await bootstrap(undefined, "session-abc");
+      expect(ensureSessionDir).toHaveBeenCalledWith("session-abc");
+    });
+
+    it("passes sessionId to killSidecar and startSidecar", async () => {
+      readConfig.mockReturnValue(makeConfig({ mapEnabled: true, sidecar: "session" }));
+      await bootstrap(undefined, "session-xyz");
+      expect(killSidecar).toHaveBeenCalledWith("session-xyz");
+      expect(startSidecar).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        "session-xyz"
+      );
+    });
+
+    it("passes sessionId to syncSessionlog", async () => {
+      readConfig.mockReturnValue(makeConfig({ mapEnabled: true, sessionlogSync: "full" }));
+      await bootstrap(undefined, "session-sync");
+      expect(syncSessionlog).toHaveBeenCalledWith(expect.anything(), "session-sync");
+    });
+
+    it("returns sessionId in result", async () => {
+      const result = await bootstrap(undefined, "session-ret");
+      expect(result.sessionId).toBe("session-ret");
+    });
+
+    it("returns null sessionId when not provided", async () => {
+      const result = await bootstrap();
+      expect(result.sessionId).toBeUndefined();
+    });
+
+    it("calls listSessionDirs during cleanup (session sidecar mode)", async () => {
+      readConfig.mockReturnValue(makeConfig({ mapEnabled: true, sidecar: "session" }));
+      await bootstrap(undefined, "session-cleanup");
+      expect(listSessionDirs).toHaveBeenCalled();
     });
   });
 });

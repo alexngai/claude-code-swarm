@@ -22,10 +22,14 @@
   },
   "peerDependencies": {
     "@multi-agent-protocol/sdk": "*",
+    "opentasks": "*",
     "swarmkit": "*"
   },
   "peerDependenciesMeta": {
     "@multi-agent-protocol/sdk": {
+      "optional": true
+    },
+    "opentasks": {
       "optional": true
     }
   },

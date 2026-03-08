@@ -79,6 +79,10 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
       enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(project.sessionlog?.enabled ?? global.sessionlog?.enabled),
       sync: envStr("SWARM_SESSIONLOG_SYNC") ?? project.sessionlog?.sync ?? global.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
     },
+    opentasks: {
+      enabled: envBool("SWARM_OPENTASKS_ENABLED") ?? Boolean(project.opentasks?.enabled ?? global.opentasks?.enabled),
+      autoStart: envBool("SWARM_OPENTASKS_AUTOSTART") ?? (project.opentasks?.autoStart ?? global.opentasks?.autoStart) !== false,
+    },
   };
 }
 

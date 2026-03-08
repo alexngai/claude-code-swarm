@@ -5,12 +5,15 @@
  * Thin wrapper: parses CLI args, delegates to src/ modules for connection,
  * socket server, and command handling.
  *
- * Usage: node map-sidecar.mjs --server ws://localhost:8080 --scope swarm:team --system-id system-id
+ * Usage: node map-sidecar.mjs --server ws://localhost:8080 --scope swarm:team --system-id system-id [--session-id id]
+ *
+ * When --session-id is provided, the sidecar uses per-session paths
+ * (socket, PID, inbox, log) scoped to MAP_DIR/sessions/<sessionId>/.
  */
 
 import fs from "fs";
 import path from "path";
-import { INBOX_PATH, SOCKET_PATH, PID_PATH } from "../src/paths.mjs";
+import { INBOX_PATH, SOCKET_PATH, PID_PATH, sessionPaths } from "../src/paths.mjs";
 import { connectToMAP } from "../src/map-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
 import { writeToInbox } from "../src/inbox.mjs";
@@ -26,7 +29,13 @@ function getArg(name, defaultValue = "") {
 const MAP_SERVER = getArg("server", "ws://localhost:8080");
 const MAP_SCOPE = getArg("scope", "swarm:default");
 const SYSTEM_ID = getArg("system-id", "system-claude-swarm");
+const SESSION_ID = getArg("session-id", "");
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+// Resolve per-session or legacy paths
+const sPaths = SESSION_ID
+  ? sessionPaths(SESSION_ID)
+  : { socketPath: SOCKET_PATH, pidPath: PID_PATH, inboxPath: INBOX_PATH };
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -53,8 +62,8 @@ async function shutdown() {
   if (inactivityTimer) clearTimeout(inactivityTimer);
   if (socketServer) socketServer.close();
 
-  try { fs.unlinkSync(SOCKET_PATH); } catch { /* ignore */ }
-  try { fs.unlinkSync(PID_PATH); } catch { /* ignore */ }
+  try { fs.unlinkSync(sPaths.socketPath); } catch { /* ignore */ }
+  try { fs.unlinkSync(sPaths.pidPath); } catch { /* ignore */ }
 
   if (connection) {
     try { await connection.disconnect(); } catch { /* ignore */ }
@@ -76,7 +85,7 @@ process.on("uncaughtException", (err) => {
 
 async function main() {
   // Ensure directories exist
-  fs.mkdirSync(path.dirname(INBOX_PATH), { recursive: true });
+  fs.mkdirSync(path.dirname(sPaths.inboxPath), { recursive: true });
 
   // Derive team name from scope
   const teamName = MAP_SCOPE.replace("swarm:", "");
@@ -89,7 +98,7 @@ async function main() {
     onMessage: (message) => {
       resetInactivityTimer();
       try {
-        writeToInbox(message);
+        writeToInbox(message, sPaths.inboxPath);
       } catch (err) {
         process.stderr.write(`[sidecar] Failed to write inbox: ${err.message}\n`);
       }
@@ -98,7 +107,7 @@ async function main() {
 
   // Start UNIX socket server
   const onCommand = createCommandHandler(connection, MAP_SCOPE, registeredAgents);
-  socketServer = createSocketServer(SOCKET_PATH, (command, client) => {
+  socketServer = createSocketServer(sPaths.socketPath, (command, client) => {
     resetInactivityTimer();
     onCommand(command, client);
   });
@@ -106,7 +115,7 @@ async function main() {
   // Start inactivity timer
   resetInactivityTimer();
 
-  process.stderr.write("[sidecar] Ready\n");
+  process.stderr.write(`[sidecar] Ready${SESSION_ID ? ` (session: ${SESSION_ID})` : ""}\n`);
 }
 
 main().catch((err) => {

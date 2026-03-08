@@ -8,6 +8,8 @@ import {
   buildTaskDispatchedPayload,
   buildTaskCompletedPayload,
   buildTaskStatusPayload,
+  buildTaskSyncPayload,
+  buildOpentasksSyncPayload,
 } from "../map-events.mjs";
 import {
   makeHookData,
@@ -320,6 +322,158 @@ describe("map-events", () => {
       const p = buildTaskStatusPayload(makeTaskCompletedData(), "t", null);
       expect(p.role).toBe("unknown");
       expect(p.isTeamRole).toBe(false);
+    });
+  });
+
+  // ── Task sync payloads (opentasks ↔ MAP bridge) ───────────────────────────
+
+  describe("buildTaskSyncPayload", () => {
+    it("sets type to 'task.sync'", () => {
+      const p = buildTaskSyncPayload({ tool_input: { taskId: "t-1" } }, "gsd");
+      expect(p.type).toBe("task.sync");
+    });
+
+    it("sets uri from tool_input.taskId", () => {
+      const p = buildTaskSyncPayload({ tool_input: { taskId: "t-1" } }, "gsd");
+      expect(p.uri).toBe("claude://gsd/t-1");
+    });
+
+    it("falls back to hookData.task_id for uri", () => {
+      const p = buildTaskSyncPayload({ task_id: "t-2", tool_input: {} }, "gsd");
+      expect(p.uri).toBe("claude://gsd/t-2");
+    });
+
+    it("maps status pending to open", () => {
+      const p = buildTaskSyncPayload({ tool_input: { status: "pending" } }, "t");
+      expect(p.status).toBe("open");
+    });
+
+    it("maps status completed to closed", () => {
+      const p = buildTaskSyncPayload({ tool_input: { status: "completed" } }, "t");
+      expect(p.status).toBe("closed");
+    });
+
+    it("maps status in_progress to in_progress", () => {
+      const p = buildTaskSyncPayload({ tool_input: { status: "in_progress" } }, "t");
+      expect(p.status).toBe("in_progress");
+    });
+
+    it("defaults status to open when not provided", () => {
+      const p = buildTaskSyncPayload({ tool_input: {} }, "t");
+      expect(p.status).toBe("open");
+    });
+
+    it("uses tool_input.subject for subject", () => {
+      const p = buildTaskSyncPayload({ tool_input: { subject: "Fix bug" } }, "t");
+      expect(p.subject).toBe("Fix bug");
+    });
+
+    it("falls back to task_subject from hookData", () => {
+      const p = buildTaskSyncPayload({ task_subject: "Add feature", tool_input: {} }, "t");
+      expect(p.subject).toBe("Add feature");
+    });
+
+    it("sets source to claude-code", () => {
+      const p = buildTaskSyncPayload({ tool_input: {} }, "t");
+      expect(p.source).toBe("claude-code");
+    });
+  });
+
+  describe("buildOpentasksSyncPayload", () => {
+    it("link tool returns task.linked payload", () => {
+      const p = buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { from: "task://a", to: "task://b", type: "blocks" },
+      });
+      expect(p.type).toBe("task.linked");
+      expect(p.from).toBe("task://a");
+      expect(p.to).toBe("task://b");
+      expect(p.linkType).toBe("blocks");
+      expect(p.source).toBe("opentasks");
+    });
+
+    it("link tool defaults linkType to related and remove to false", () => {
+      const p = buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { from: "a", to: "b" },
+      });
+      expect(p.linkType).toBe("related");
+      expect(p.remove).toBe(false);
+    });
+
+    it("link tool returns null when from or to is missing", () => {
+      expect(buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { from: "a" },
+      })).toBeNull();
+      expect(buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { to: "b" },
+      })).toBeNull();
+    });
+
+    it("annotate tool returns task.sync with annotation", () => {
+      const p = buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__annotate",
+        tool_input: { target: "task://1", feedback: { type: "suggestion" } },
+      });
+      expect(p.type).toBe("task.sync");
+      expect(p.uri).toBe("task://1");
+      expect(p.annotation).toBe("suggestion");
+      expect(p.source).toBe("opentasks");
+    });
+
+    it("annotate tool defaults annotation to comment", () => {
+      const p = buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__annotate",
+        tool_input: { target: "task://1" },
+      });
+      expect(p.annotation).toBe("comment");
+    });
+
+    it("annotate tool returns null when target is missing", () => {
+      expect(buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__annotate",
+        tool_input: {},
+      })).toBeNull();
+    });
+
+    it("query tool returns null (read-only)", () => {
+      expect(buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__query",
+        tool_input: { filter: "status:open" },
+      })).toBeNull();
+    });
+
+    it("generic fallback with input.target returns task.sync", () => {
+      const p = buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__update",
+        tool_input: { target: "task://x", status: "closed" },
+      });
+      expect(p.type).toBe("task.sync");
+      expect(p.uri).toBe("task://x");
+      expect(p.status).toBe("closed");
+      expect(p.source).toBe("opentasks");
+    });
+
+    it("generic fallback with input.id returns task.sync", () => {
+      const p = buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__create",
+        tool_input: { id: "task://y" },
+      });
+      expect(p.type).toBe("task.sync");
+      expect(p.uri).toBe("task://y");
+    });
+
+    it("returns null when no syncable data present", () => {
+      expect(buildOpentasksSyncPayload({
+        tool_name: "mcp__opentasks__something",
+        tool_input: {},
+      })).toBeNull();
+    });
+
+    it("returns null when hook data is empty", () => {
+      expect(buildOpentasksSyncPayload({})).toBeNull();
     });
   });
 });

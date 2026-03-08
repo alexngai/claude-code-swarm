@@ -95,6 +95,10 @@ export const ROLES_PATH = path.join(_mapDir, "roles.json");
 export const SESSIONLOG_STATE_PATH = path.join(_mapDir, "sessionlog-state.json");
 export const SIDECAR_LOG_PATH = path.join(_mapDir, "sidecar.log");
 
+// opentasks runtime state
+export const OPENTASKS_DIR = path.join(_tmpDir, "opentasks");
+export const OPENTASKS_SYNC_STATE_PATH = path.join(_tmpDir, "opentasks", "sync-state.json");
+
 /**
  * Whether paths resolved to global (~/.claude/claude-swarm/tmp/) vs project-level.
  */
@@ -136,10 +140,90 @@ export function ensureMapDir() {
 }
 
 /**
+ * Ensure the opentasks runtime directory exists.
+ */
+export function ensureOpentasksDir() {
+  fs.mkdirSync(OPENTASKS_DIR, { recursive: true });
+}
+
+/**
  * Resolve the plugin root directory.
  * Works from any file in src/ or scripts/.
  */
 export function pluginDir() {
   const thisFile = fileURLToPath(import.meta.url);
   return path.resolve(path.dirname(thisFile), "..");
+}
+
+// --- Per-session MAP paths ---
+
+/**
+ * Compute per-session MAP sidecar paths.
+ * When sessionId is provided, scopes files to MAP_DIR/sessions/<sessionId>/.
+ * When sessionId is null/undefined, returns the fixed legacy paths
+ * (used by persistent sidecar mode or when session ID is unavailable).
+ *
+ * Long session IDs (>12 chars) are hashed to avoid Unix socket path length limits (~104 chars on macOS).
+ */
+export function sessionPaths(sessionId) {
+  if (!sessionId) {
+    return {
+      socketPath: SOCKET_PATH,
+      pidPath: PID_PATH,
+      inboxPath: INBOX_PATH,
+      sidecarLogPath: SIDECAR_LOG_PATH,
+      sessionDir: null,
+    };
+  }
+  const safeId = sessionId.length > 12
+    ? createHash("sha256").update(sessionId).digest("hex").slice(0, 12)
+    : sessionId;
+  const dir = path.join(_mapDir, "sessions", safeId);
+  return {
+    socketPath: path.join(dir, "sidecar.sock"),
+    pidPath: path.join(dir, "sidecar.pid"),
+    inboxPath: path.join(dir, "inbox.jsonl"),
+    sidecarLogPath: path.join(dir, "sidecar.log"),
+    sessionDir: dir,
+  };
+}
+
+/**
+ * Ensure the per-session MAP directory exists.
+ * Falls back to creating MAP_DIR when sessionId is null.
+ */
+export function ensureSessionDir(sessionId) {
+  const { sessionDir } = sessionPaths(sessionId);
+  if (sessionDir) {
+    fs.mkdirSync(sessionDir, { recursive: true });
+  } else {
+    fs.mkdirSync(MAP_DIR, { recursive: true });
+  }
+}
+
+/**
+ * List all session directories under MAP_DIR/sessions/.
+ * Returns array of { sessionId, dir, pidPath }.
+ * Used for stale session cleanup.
+ */
+export function listSessionDirs() {
+  const sessionsDir = path.join(_mapDir, "sessions");
+  if (!fs.existsSync(sessionsDir)) return [];
+  try {
+    return fs.readdirSync(sessionsDir)
+      .filter((d) => {
+        try {
+          return fs.statSync(path.join(sessionsDir, d)).isDirectory();
+        } catch {
+          return false;
+        }
+      })
+      .map((d) => ({
+        sessionId: d,
+        dir: path.join(sessionsDir, d),
+        pidPath: path.join(sessionsDir, d, "sidecar.pid"),
+      }));
+  } catch {
+    return [];
+  }
 }

@@ -119,3 +119,100 @@ describe("path resolution logic", () => {
     expect(paths.TEAMS_DIR).toBe(".swarm/claude-swarm/tmp/teams");
   });
 });
+
+describe("sessionPaths", () => {
+  let paths;
+
+  beforeEach(async () => {
+    paths = await import("../paths.mjs");
+  });
+
+  it("returns legacy paths when sessionId is null", () => {
+    const sp = paths.sessionPaths(null);
+    expect(sp.socketPath).toBe(paths.SOCKET_PATH);
+    expect(sp.pidPath).toBe(paths.PID_PATH);
+    expect(sp.inboxPath).toBe(paths.INBOX_PATH);
+    expect(sp.sidecarLogPath).toBe(paths.SIDECAR_LOG_PATH);
+    expect(sp.sessionDir).toBeNull();
+  });
+
+  it("returns legacy paths when sessionId is undefined", () => {
+    const sp = paths.sessionPaths(undefined);
+    expect(sp.socketPath).toBe(paths.SOCKET_PATH);
+    expect(sp.sessionDir).toBeNull();
+  });
+
+  it("returns legacy paths when sessionId is empty string", () => {
+    const sp = paths.sessionPaths("");
+    expect(sp.socketPath).toBe(paths.SOCKET_PATH);
+    expect(sp.sessionDir).toBeNull();
+  });
+
+  it("returns session-scoped paths when sessionId is provided", () => {
+    const sp = paths.sessionPaths("abc123");
+    expect(sp.sessionDir).toBe(path.join(paths.MAP_DIR, "sessions", "abc123"));
+    expect(sp.socketPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "sidecar.sock"));
+    expect(sp.pidPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "sidecar.pid"));
+    expect(sp.inboxPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "inbox.jsonl"));
+    expect(sp.sidecarLogPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "sidecar.log"));
+  });
+
+  it("hashes long session IDs (>12 chars) to 12 hex chars", () => {
+    const longId = "this-is-a-very-long-session-id-that-exceeds-12-chars";
+    const sp = paths.sessionPaths(longId);
+    const sessionDirName = path.basename(sp.sessionDir);
+    expect(sessionDirName).toMatch(/^[a-f0-9]{12}$/);
+    expect(sessionDirName.length).toBe(12);
+  });
+
+  it("uses short session IDs directly (<=12 chars)", () => {
+    const sp = paths.sessionPaths("short-id");
+    const sessionDirName = path.basename(sp.sessionDir);
+    expect(sessionDirName).toBe("short-id");
+  });
+
+  it("produces consistent hashes for the same long ID", () => {
+    const longId = "a-very-long-session-identifier-here";
+    const sp1 = paths.sessionPaths(longId);
+    const sp2 = paths.sessionPaths(longId);
+    expect(sp1.sessionDir).toBe(sp2.sessionDir);
+  });
+});
+
+describe("ensureSessionDir", () => {
+  let paths;
+  let fs;
+  let tmpDir;
+
+  beforeEach(async () => {
+    paths = await import("../paths.mjs");
+    fs = await import("fs");
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-dir-test-"));
+  });
+
+  afterEach(async () => {
+    const fs = await import("fs");
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("is exported as a function", () => {
+    expect(typeof paths.ensureSessionDir).toBe("function");
+  });
+});
+
+describe("listSessionDirs", () => {
+  let paths;
+
+  beforeEach(async () => {
+    paths = await import("../paths.mjs");
+  });
+
+  it("returns empty array when no sessions directory exists", () => {
+    const result = paths.listSessionDirs();
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("is exported as a function", () => {
+    expect(typeof paths.listSessionDirs).toBe("function");
+  });
+});

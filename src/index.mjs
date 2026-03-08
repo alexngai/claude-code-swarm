@@ -22,10 +22,16 @@ export {
   MAP_DIR,
   SIDECAR_LOG_PATH,
   IS_GLOBAL_PATHS,
+  OPENTASKS_DIR,
+  OPENTASKS_SYNC_STATE_PATH,
   teamDir,
   ensureSwarmDir,
   ensureMapDir,
+  ensureOpentasksDir,
   pluginDir,
+  sessionPaths,
+  ensureSessionDir,
+  listSessionDirs,
 } from "./paths.mjs";
 
 // Roles
@@ -63,6 +69,8 @@ export {
   buildTaskDispatchedPayload,
   buildTaskCompletedPayload,
   buildTaskStatusPayload,
+  buildTaskSyncPayload,
+  buildOpentasksSyncPayload,
 } from "./map-events.mjs";
 
 // Sessionlog
@@ -79,6 +87,7 @@ export {
   listAvailableTemplates,
   readTeamManifest,
   generateTeamArtifacts,
+  loadTeam,
 } from "./template.mjs";
 
 // Agent generator
@@ -96,6 +105,15 @@ export {
   configureNodePath,
   resolveSwarmkit,
 } from "./swarmkit-resolver.mjs";
+
+// opentasks client
+export {
+  findSocketPath,
+  rpcRequest,
+  isDaemonAlive,
+  ensureDaemon,
+  pushSyncEvent,
+} from "./opentasks-client.mjs";
 
 // Bootstrap
 export { bootstrap } from "./bootstrap.mjs";

@@ -65,9 +65,44 @@ describe("sidecar-client", () => {
     });
   });
 
+  describe("isSidecarAlive with custom pidPath", () => {
+    let tmpDir;
+
+    beforeEach(() => {
+      tmpDir = makeTmpDir();
+    });
+    afterEach(() => {
+      cleanupTmpDir(tmpDir);
+    });
+
+    it("returns true when PID file contains current process PID", () => {
+      const pidPath = path.join(tmpDir, "test.pid");
+      fs.writeFileSync(pidPath, String(process.pid));
+      expect(isSidecarAlive(pidPath)).toBe(true);
+    });
+
+    it("returns false when PID file contains non-existent PID", () => {
+      const pidPath = path.join(tmpDir, "test.pid");
+      fs.writeFileSync(pidPath, "999999999");
+      expect(isSidecarAlive(pidPath)).toBe(false);
+    });
+
+    it("returns false when custom pidPath does not exist", () => {
+      expect(isSidecarAlive(path.join(tmpDir, "nope.pid"))).toBe(false);
+    });
+  });
+
   describe("killSidecar", () => {
     it("does not throw when PID file is missing", () => {
       expect(() => killSidecar()).not.toThrow();
+    });
+
+    it("does not throw when sessionId is null (legacy paths)", () => {
+      expect(() => killSidecar(null)).not.toThrow();
+    });
+
+    it("does not throw when sessionId is provided but no PID file exists", () => {
+      expect(() => killSidecar("nonexistent-session")).not.toThrow();
     });
   });
 });

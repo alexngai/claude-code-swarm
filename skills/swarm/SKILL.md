@@ -15,27 +15,30 @@ You are the **swarm orchestrator** for the claude-code-swarm plugin. Your job is
 
 Follow these steps in order. Be efficient — do not debug or retry failed commands, just proceed to the next step.
 
-### Step 1: Find the plugin directory and generate artifacts
+### Step 1: Locate team artifacts
 
-The plugin directory is listed in the system init message under `plugins` (look for `claude-code-swarm` and use its `path`). If you cannot find it there, run:
+Check the session init context for **"Team artifacts ready"** — the bootstrap hook pre-loads the configured template and outputs the artifact paths (SKILL.md and agent prompts directory).
 
-```bash
-find ~/.claude/plugins -name "plugin.json" -path "*/claude-code-swarm/*" -exec dirname {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null
-```
+If the artifact paths are already shown in the init context, skip to **Step 2** using those paths.
 
-The template name comes from `$ARGUMENTS` (e.g. `gsd`). If none provided, ask the user. Templates available via openteams: **gsd**, **bmad-method**, **bug-fix-pipeline**, **docs-sync**, **security-audit** (and more).
+If no artifacts are shown (e.g. the user specified a different template via `$ARGUMENTS`, or no template was configured), generate them:
 
-Generate artifacts with the team-loader script (this handles dependency resolution, artifact generation, and roles.json):
+1. Find the plugin directory from the system init message under `plugins` (look for `claude-code-swarm` and use its `path`). Fallback:
+   ```bash
+   find ~/.claude/plugins -name "plugin.json" -path "*/claude-code-swarm/*" -exec dirname {} \; 2>/dev/null | head -1 | xargs dirname 2>/dev/null
+   ```
 
-```bash
-node "$PLUGIN_DIR/scripts/team-loader.mjs" "<template-name>"
-```
+2. The template name comes from `$ARGUMENTS` (e.g. `gsd`). If none provided, ask the user. Templates available via openteams: **gsd**, **bmad-method**, **bug-fix-pipeline**, **docs-sync**, **security-audit** (and more).
+
+3. Run the team-loader:
+   ```bash
+   node "$PLUGIN_DIR/scripts/team-loader.mjs" "<template-name>"
+   ```
+   The output contains the artifact paths.
 
 ### Step 2: Read the generated artifacts
 
-The team-loader output tells you where the artifacts were generated. Look for the paths in its output — they point to the SKILL.md and agent prompt directory.
-
-1. Read the **SKILL.md** from the path shown in the team-loader output — this is the team catalog overview (topology, roles, relationships)
+1. Read the **SKILL.md** from the artifact path — this is the team catalog overview (topology, roles, relationships)
 2. Read agent prompts from the `agents/` subdirectory (e.g. `agents/<role>.md`) as needed before spawning each role
 
 Use the SKILL.md to understand the topology: which roles exist, the root role, companions, and spawn rules. You don't need to read every agent prompt upfront — read them as needed before spawning each agent.
@@ -45,7 +48,7 @@ Use the SKILL.md to understand the topology: which roles exist, the root role, c
 ```
 TeamCreate(
   team_name="<template-name>",
-  description="<description from team-loader output>"
+  description="<description from SKILL.md>"
 )
 ```
 

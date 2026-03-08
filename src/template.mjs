@@ -10,6 +10,8 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { getGlobalNodeModules } from "./swarmkit-resolver.mjs";
+import { teamDir } from "./paths.mjs";
+import { writeRoles } from "./roles.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -110,6 +112,42 @@ export function readTeamManifest(templatePath) {
     "utf-8"
   );
   return yaml.load(content);
+}
+
+/**
+ * Load a team template: resolve path, generate artifacts (with cache), write roles.json.
+ * Returns { success, templateName, templatePath, outputDir, teamName, cached, error? }.
+ * Returns { success: false } if template not found or generation fails.
+ */
+export function loadTeam(templateName) {
+  const templatePath = resolveTemplatePath(templateName);
+  if (!templatePath) {
+    return { success: false, templateName, error: `Template '${templateName}' not found` };
+  }
+
+  const outputDir = teamDir(templateName);
+  const cached = fs.existsSync(path.join(outputDir, "SKILL.md"));
+
+  if (!cached) {
+    const result = generateTeamArtifacts(templatePath, outputDir);
+    if (!result.success) {
+      return { success: false, templateName, templatePath, error: result.error };
+    }
+  }
+
+  // Write roles.json for MAP hook integration
+  writeRoles(templatePath);
+
+  // Resolve team name from manifest
+  let teamName = templateName;
+  try {
+    const manifest = readTeamManifest(templatePath);
+    teamName = manifest.name || teamName;
+  } catch {
+    // Use template name as fallback
+  }
+
+  return { success: true, templateName, templatePath, outputDir, teamName, cached };
 }
 
 /**

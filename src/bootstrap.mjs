@@ -5,12 +5,17 @@
  * packages via swarmkit (openteams, MAP SDK, sessionlog), starts MAP
  * sidecar if configured, runs initial sessionlog sync.
  * Returns context object for formatting.
+ *
+ * Supports per-session sidecars: when sessionId is provided, each session
+ * gets its own sidecar process with isolated socket/pid/inbox paths.
  */
 
 import fs from "fs";
 import { execSync } from "child_process";
 import { readConfig, resolveScope } from "./config.mjs";
-import { SOCKET_PATH, PID_PATH, MAP_DIR, SIDECAR_LOG_PATH, pluginDir, ensureSwarmDir } from "./paths.mjs";
+import { SOCKET_PATH, MAP_DIR, pluginDir, ensureSwarmDir, ensureOpentasksDir, ensureSessionDir, listSessionDirs } from "./paths.mjs";
+import { findSocketPath, isDaemonAlive, ensureDaemon } from "./opentasks-client.mjs";
+import { loadTeam } from "./template.mjs";
 import { killSidecar, startSidecar } from "./sidecar-client.mjs";
 import { checkSessionlogStatus, syncSessionlog } from "./sessionlog.mjs";
 import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
@@ -46,6 +51,9 @@ function getRequiredGlobalPackages(config) {
   }
   if (config.sessionlog.enabled) {
     packages.push("sessionlog");
+  }
+  if (config.opentasks?.enabled) {
+    packages.push("opentasks");
   }
   return packages;
 }
@@ -142,6 +150,15 @@ async function initSwarmProject(config) {
     }
   }
 
+  // Init opentasks project dir (.swarm/opentasks/) if enabled
+  if (config.opentasks?.enabled && !swarmkit.isProjectInit(cwd, "opentasks")) {
+    try {
+      await swarmkit.initProjectPackage("opentasks", ctx);
+    } catch {
+      // best-effort
+    }
+  }
+
   // Init claude-code-swarm project dir (.swarm/claude-swarm/)
   if (!swarmkit.isProjectInit(cwd, "claude-code-swarm")) {
     try {
@@ -154,15 +171,41 @@ async function initSwarmProject(config) {
 }
 
 /**
+ * Clean up stale session directories whose sidecar processes have died.
+ * Scans MAP_DIR/sessions/ and removes directories with dead PIDs.
+ * Best-effort: never throws.
+ */
+function cleanupStaleSessions() {
+  try {
+    for (const { dir, pidPath } of listSessionDirs()) {
+      try {
+        const pid = parseInt(fs.readFileSync(pidPath, "utf-8").trim());
+        process.kill(pid, 0); // throws if process is dead
+        // Process is alive — leave this session alone
+      } catch {
+        // Process is dead or PID file unreadable — clean up
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch {
+          // ignore cleanup failures
+        }
+      }
+    }
+  } catch {
+    // Non-critical
+  }
+}
+
+/**
  * Start the MAP sidecar in session mode.
- * Kills any existing sidecar first, then starts a new one.
+ * Only kills this session's sidecar (if any), not other sessions'.
  * Returns status string.
  */
-async function startSessionSidecar(config, scope, dir) {
-  // Kill any existing sidecar from a previous session
-  killSidecar();
+async function startSessionSidecar(config, scope, dir, sessionId) {
+  // Kill only this session's sidecar (if somehow already running)
+  killSidecar(sessionId);
 
-  const ok = await startSidecar(config, dir);
+  const ok = await startSidecar(config, dir, sessionId);
   if (ok) {
     return `connected (scope: ${scope})`;
   }
@@ -182,8 +225,9 @@ function checkPersistentSidecar(scope) {
 
 /**
  * Full bootstrap flow. Returns context object for formatting.
+ * When sessionId is provided, uses per-session sidecar paths.
  */
-export async function bootstrap(pluginDirOverride) {
+export async function bootstrap(pluginDirOverride, sessionId) {
   const dir = pluginDirOverride || pluginDir();
 
   // 0. Install local dependencies (js-yaml, swarmkit)
@@ -203,6 +247,21 @@ export async function bootstrap(pluginDirOverride) {
 
   const scope = resolveScope(config);
 
+  // 1e. Load team template if configured (resolve, generate/cache, write roles.json)
+  let team = null;
+  if (config.template) {
+    try {
+      const result = loadTeam(config.template);
+      if (result.success) {
+        team = result;
+      } else {
+        process.stderr.write(`[bootstrap] Warning: failed to load template '${config.template}': ${result.error}\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`[bootstrap] Warning: template loading failed: ${err.message}\n`);
+    }
+  }
+
   // 2. Check sessionlog status
   let sessionlogStatus = "not installed";
   if (config.sessionlog.enabled) {
@@ -212,10 +271,16 @@ export async function bootstrap(pluginDirOverride) {
   // 3. Start MAP sidecar if configured
   let mapStatus = "disabled";
   if (config.map.enabled) {
-    fs.mkdirSync(MAP_DIR, { recursive: true });
+    if (sessionId) {
+      ensureSessionDir(sessionId);
+    } else {
+      fs.mkdirSync(MAP_DIR, { recursive: true });
+    }
 
     if (config.map.sidecar === "session") {
-      mapStatus = await startSessionSidecar(config, scope, dir);
+      // Clean up stale sessions before starting new one
+      cleanupStaleSessions();
+      mapStatus = await startSessionSidecar(config, scope, dir, sessionId);
     } else if (config.map.sidecar === "persistent") {
       mapStatus = checkPersistentSidecar(scope);
     }
@@ -223,15 +288,32 @@ export async function bootstrap(pluginDirOverride) {
 
   // 3b. Initial sessionlog sync (fire and forget)
   if (config.map.enabled && config.sessionlog.sync !== "off") {
-    syncSessionlog(config).catch(() => {});
+    syncSessionlog(config, sessionId).catch(() => {});
+  }
+
+  // 4. Start opentasks daemon if configured
+  let opentasksStatus = "disabled";
+  if (config.opentasks?.enabled) {
+    ensureOpentasksDir();
+    if (config.opentasks?.autoStart) {
+      const ok = await ensureDaemon(config);
+      opentasksStatus = ok ? "connected" : "starting";
+    } else {
+      const alive = await isDaemonAlive(findSocketPath());
+      opentasksStatus = alive ? "connected" : "not running (autoStart: false)";
+    }
   }
 
   return {
     template: config.template,
+    team,
     mapEnabled: config.map.enabled,
     mapStatus,
     sessionlogEnabled: config.sessionlog.enabled,
     sessionlogStatus,
     sessionlogSync: config.sessionlog.sync,
+    opentasksEnabled: config.opentasks?.enabled,
+    opentasksStatus,
+    sessionId,
   };
 }

@@ -42,6 +42,15 @@
             "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8')).map||{};process.exit(c.enabled||c.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" agent-completed; fi"
           }
         ]
+      },
+      {
+        "matcher": "mcp__opentasks",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .swarm/claude-swarm/config.json ] && node -e \"const c=JSON.parse(require('fs').readFileSync('.swarm/claude-swarm/config.json','utf-8'));process.exit((c.opentasks?.enabled||process.env.SWARM_OPENTASKS_ENABLED)&&(c.map?.enabled||c.map?.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED)?0:1)\" 2>/dev/null; then node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" opentasks-mcp-used; fi"
+          }
+        ]
       }
     ],
     "Stop": [

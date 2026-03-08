@@ -27,6 +27,10 @@ export function makeConfig(overrides = {}) {
       enabled: overrides.sessionlogEnabled ?? false,
       sync: overrides.sessionlogSync ?? "off",
     },
+    opentasks: {
+      enabled: overrides.opentasksEnabled ?? false,
+      autoStart: overrides.opentasksAutoStart ?? true,
+    },
   };
 }
 
@@ -124,6 +128,15 @@ export function makeTaskCompletedData(overrides = {}) {
     task_description: overrides.taskDescription ?? "Add the new feature",
     teammate_name: overrides.teammateName ?? "implementer",
     team_name: overrides.teamName ?? "my-team",
+  };
+}
+
+export function makeOpentasksMcpHookData(overrides = {}) {
+  return {
+    session_id: overrides.sessionId ?? "session-123",
+    tool_name: overrides.toolName ?? "mcp__opentasks__update",
+    tool_input: overrides.toolInput ?? { target: "task://test/1", status: "open" },
+    tool_output: overrides.toolOutput ?? "{}",
   };
 }
 

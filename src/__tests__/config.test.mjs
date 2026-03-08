@@ -53,6 +53,31 @@ describe("config", () => {
       expect(config.sessionlog.sync).toBe("off");
     });
 
+    it("normalizes opentasks fields with defaults", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.opentasks.enabled).toBe(false);
+      expect(config.opentasks.autoStart).toBe(true);
+    });
+
+    it("reads opentasks.enabled from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        template: "test",
+        opentasks: { enabled: true },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.opentasks.enabled).toBe(true);
+    });
+
+    it("reads opentasks.autoStart false from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        template: "test",
+        opentasks: { enabled: true, autoStart: false },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.opentasks.autoStart).toBe(false);
+    });
+
     it("returns defaults when file does not exist", () => {
       const config = readConfig(path.join(tmpDir, "nonexistent.json"), noGlobal);
       expect(config.template).toBe("");
@@ -360,6 +385,20 @@ describe("config", () => {
         sessionlog: { sync: "off" },
       }));
       expect(readConfig(configPath, noGlobal).sessionlog.sync).toBe("full");
+    });
+
+    it("SWARM_OPENTASKS_ENABLED overrides config file", () => {
+      process.env.SWARM_OPENTASKS_ENABLED = "true";
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        opentasks: { enabled: false },
+      }));
+      expect(readConfig(configPath, noGlobal).opentasks.enabled).toBe(true);
+    });
+
+    it("SWARM_OPENTASKS_AUTOSTART overrides default", () => {
+      process.env.SWARM_OPENTASKS_AUTOSTART = "false";
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({}));
+      expect(readConfig(configPath, noGlobal).opentasks.autoStart).toBe(false);
     });
 
     it("env vars override defaults when no config file exists", () => {
