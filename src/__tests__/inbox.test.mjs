@@ -1,94 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import path from "path";
-import fs from "fs";
-import { readInbox, clearInbox, writeToInbox, formatInboxAsMarkdown, formatAge } from "../inbox.mjs";
-import { makeTmpDir, cleanupTmpDir } from "./helpers.mjs";
+import { describe, it, expect } from "vitest";
+import { formatInboxAsMarkdown, formatAge } from "../inbox.mjs";
 
 describe("inbox", () => {
-  let tmpDir;
-  let inboxPath;
-  beforeEach(() => {
-    tmpDir = makeTmpDir();
-    inboxPath = path.join(tmpDir, "inbox.jsonl");
-  });
-  afterEach(() => { cleanupTmpDir(tmpDir); });
-
-  describe("readInbox", () => {
-    it("returns empty array when file does not exist", () => {
-      expect(readInbox(path.join(tmpDir, "nope.jsonl"))).toEqual([]);
-    });
-
-    it("returns empty array when file is empty", () => {
-      fs.writeFileSync(inboxPath, "");
-      expect(readInbox(inboxPath)).toEqual([]);
-    });
-
-    it("parses single NDJSON line", () => {
-      fs.writeFileSync(inboxPath, JSON.stringify({ from: "a" }) + "\n");
-      const msgs = readInbox(inboxPath);
-      expect(msgs).toHaveLength(1);
-      expect(msgs[0].from).toBe("a");
-    });
-
-    it("parses multiple NDJSON lines", () => {
-      const lines = [
-        JSON.stringify({ from: "a" }),
-        JSON.stringify({ from: "b" }),
-      ].join("\n");
-      fs.writeFileSync(inboxPath, lines);
-      expect(readInbox(inboxPath)).toHaveLength(2);
-    });
-
-    it("skips malformed JSON lines without throwing", () => {
-      fs.writeFileSync(inboxPath, `{"from":"a"}\nnot-json\n{"from":"b"}\n`);
-      const msgs = readInbox(inboxPath);
-      expect(msgs).toHaveLength(2);
-    });
-
-    it("skips blank lines", () => {
-      fs.writeFileSync(inboxPath, `{"from":"a"}\n\n{"from":"b"}\n`);
-      expect(readInbox(inboxPath)).toHaveLength(2);
-    });
-  });
-
-  describe("writeToInbox", () => {
-    it("creates file and writes first message as NDJSON", () => {
-      writeToInbox({ from: "test" }, inboxPath);
-      const content = fs.readFileSync(inboxPath, "utf-8");
-      expect(content).toBe(JSON.stringify({ from: "test" }) + "\n");
-    });
-
-    it("appends subsequent messages on new lines", () => {
-      writeToInbox({ id: 1 }, inboxPath);
-      writeToInbox({ id: 2 }, inboxPath);
-      const lines = fs.readFileSync(inboxPath, "utf-8").trim().split("\n");
-      expect(lines).toHaveLength(2);
-    });
-  });
-
-  describe("clearInbox", () => {
-    it("empties an existing inbox file", () => {
-      fs.writeFileSync(inboxPath, "some content");
-      clearInbox(inboxPath);
-      expect(fs.readFileSync(inboxPath, "utf-8")).toBe("");
-    });
-
-    it("does not throw when file does not exist", () => {
-      expect(() => clearInbox(path.join(tmpDir, "nope.jsonl"))).not.toThrow();
-    });
-  });
-
-  describe("round-trip", () => {
-    it("write, read back, clear, read returns empty", () => {
-      writeToInbox({ msg: "hello" }, inboxPath);
-      writeToInbox({ msg: "world" }, inboxPath);
-      const msgs = readInbox(inboxPath);
-      expect(msgs).toHaveLength(2);
-      clearInbox(inboxPath);
-      expect(readInbox(inboxPath)).toEqual([]);
-    });
-  });
-
   describe("formatAge", () => {
     it("returns '<1s' for ms < 1000", () => {
       expect(formatAge(500)).toBe("<1s");
@@ -125,6 +38,16 @@ describe("inbox", () => {
       expect(md).toContain("1 external message");
     });
 
+    it("formats agent-inbox style messages with sender_id and content", () => {
+      const md = formatInboxAsMarkdown([{
+        sender_id: "agent-2",
+        created_at: new Date().toISOString(),
+        content: { type: "text", text: "hello from inbox" },
+      }]);
+      expect(md).toContain("**From agent-2**");
+      expect(md).toContain("> hello from inbox");
+    });
+
     it("formats string payload as blockquote", () => {
       const md = formatInboxAsMarkdown([{ from: "a", payload: "hello world" }]);
       expect(md).toContain("> hello world");
@@ -135,6 +58,11 @@ describe("inbox", () => {
       expect(md).toContain("[task] Do X");
     });
 
+    it("formats text content type with text field", () => {
+      const md = formatInboxAsMarkdown([{ from: "a", content: { type: "text", text: "hello" } }]);
+      expect(md).toContain("> hello");
+    });
+
     it("formats raw object payload as JSON", () => {
       const md = formatInboxAsMarkdown([{ from: "a", payload: { foo: "bar" } }]);
       expect(md).toContain(JSON.stringify({ foo: "bar" }));
@@ -142,6 +70,11 @@ describe("inbox", () => {
 
     it("includes priority when not 'normal'", () => {
       const md = formatInboxAsMarkdown([{ from: "a", payload: "x", meta: { priority: "high" } }]);
+      expect(md).toContain("Priority: high");
+    });
+
+    it("includes importance when not 'normal'", () => {
+      const md = formatInboxAsMarkdown([{ from: "a", payload: "x", importance: "high" }]);
       expect(md).toContain("Priority: high");
     });
 

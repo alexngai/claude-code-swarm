@@ -9,7 +9,6 @@ export { readConfig, resolveScope, resolveTeamName, resolveMapServer, DEFAULTS }
 export {
   SWARM_DIR,
   SOCKET_PATH,
-  INBOX_PATH,
   PID_PATH,
   ROLES_PATH,
   SESSIONLOG_STATE_PATH,
@@ -38,7 +37,7 @@ export {
 export { readRoles, matchRole, writeRoles } from "./roles.mjs";
 
 // Inbox
-export { readInbox, clearInbox, writeToInbox, formatInboxAsMarkdown, formatAge } from "./inbox.mjs";
+export { formatInboxAsMarkdown, formatAge } from "./inbox.mjs";
 
 // Context output
 export {

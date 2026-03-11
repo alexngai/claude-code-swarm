@@ -54,23 +54,44 @@ export async function emitPayload(config, payload, meta, sessionId) {
 // ── Agent lifecycle commands (SDK primitives via sidecar) ─────────────────────
 
 /**
+ * Build the agent ID in <session-id>/<role> format.
+ * Uses tool_use_id as a unique session-like identifier for the spawned agent,
+ * combined with the matched role. Falls back to agentName if no role matched.
+ *
+ * This ensures duplicate roles (e.g. two researchers) get unique IDs:
+ *   "tu_abc123/researcher", "tu_def456/researcher"
+ *
+ * The scope (leader's session) groups all agents in the same team.
+ */
+export function buildAgentId(agentName, matchedRole, hookData) {
+  const sessionPrefix = hookData.tool_use_id || hookData.session_id || Date.now().toString(36);
+  const role = matchedRole || agentName;
+  return `${sessionPrefix}/${role}`;
+}
+
+/**
  * Build a "spawn" sidecar command for a team agent.
  * Sidecar calls conn.spawn() → server auto-emits agent_registered.
+ *
+ * Agent IDs use <tool_use_id>/<role> format for uniqueness.
+ * Scope uses the leader's session ID for team grouping.
  */
 export function buildSpawnCommand(agentName, matchedRole, teamName, hookData) {
   const prompt =
     hookData.tool_input?.prompt || hookData.tool_input?.description || "";
+  const agentId = buildAgentId(agentName, matchedRole, hookData);
   return {
     action: "spawn",
     agent: {
-      agentId: matchedRole ? `${teamName}-${matchedRole}` : agentName,
+      agentId,
       name: matchedRole || agentName,
       role: matchedRole || "internal",
-      scopes: [`swarm:${teamName}`],
+      scopes: [hookData.session_id || `swarm:${teamName}`],
       metadata: {
         template: teamName,
         isTeamRole: !!matchedRole,
         task: prompt.substring(0, 300),
+        toolUseId: hookData.tool_use_id || "",
       },
     },
   };
@@ -80,10 +101,11 @@ export function buildSpawnCommand(agentName, matchedRole, teamName, hookData) {
  * Build a "done" sidecar command for a team agent.
  * Sidecar unregisters the agent → server auto-emits agent_unregistered.
  */
-export function buildDoneCommand(agentName, matchedRole, teamName) {
+export function buildDoneCommand(agentName, matchedRole, teamName, hookData) {
+  const agentId = buildAgentId(agentName, matchedRole, hookData);
   return {
     action: "done",
-    agentId: matchedRole ? `${teamName}-${matchedRole}` : agentName,
+    agentId,
     reason: "completed",
   };
 }
@@ -142,11 +164,12 @@ export function buildStateCommand(agentId, state, metadata) {
 export function buildTaskDispatchedPayload(hookData, teamName, matchedRole, agentName) {
   const prompt =
     hookData.tool_input?.prompt || hookData.tool_input?.description || "";
+  const agentId = buildAgentId(agentName, matchedRole, hookData);
   return {
     type: "task.dispatched",
     taskId: hookData.tool_use_id || "",
-    from: `${teamName}-sidecar`,
-    targetAgent: matchedRole ? `${teamName}-${matchedRole}` : agentName,
+    from: `${hookData.session_id || teamName}-sidecar`,
+    targetAgent: agentId,
     targetRole: matchedRole || "internal",
     description: prompt.substring(0, 300),
   };
@@ -156,10 +179,11 @@ export function buildTaskDispatchedPayload(hookData, teamName, matchedRole, agen
  * Build a task.completed message payload.
  */
 export function buildTaskCompletedPayload(hookData, teamName, matchedRole, agentName) {
+  const agentId = buildAgentId(agentName, matchedRole, hookData);
   return {
     type: "task.completed",
     taskId: hookData.tool_use_id || "",
-    agent: matchedRole ? `${teamName}-${matchedRole}` : agentName,
+    agent: agentId,
     status: "completed",
   };
 }

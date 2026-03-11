@@ -19,11 +19,25 @@ export function killByPidFile(pidPath) {
 
 /**
  * Clean up generated artifacts and sidecar processes in a workspace.
+ * Kills both default and per-session sidecar processes.
  */
 export function cleanupWorkspace(dir) {
-  // Kill MAP sidecar if running
-  const pidPath = path.join(dir, ".swarm", "claude-swarm", "tmp", "map", "sidecar.pid");
-  killByPidFile(pidPath);
+  const mapDir = path.join(dir, ".swarm", "claude-swarm", "tmp", "map");
+
+  // Kill default MAP sidecar if running
+  killByPidFile(path.join(mapDir, "sidecar.pid"));
+
+  // Kill all per-session sidecars
+  const sessionsDir = path.join(mapDir, "sessions");
+  try {
+    if (fs.existsSync(sessionsDir)) {
+      for (const entry of fs.readdirSync(sessionsDir)) {
+        killByPidFile(path.join(sessionsDir, entry, "sidecar.pid"));
+      }
+    }
+  } catch {
+    // ignore
+  }
 
   // Remove all generated/tmp artifacts
   const tmpDir = path.join(dir, ".swarm", "claude-swarm", "tmp");

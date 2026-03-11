@@ -188,8 +188,25 @@ export function createCommandHandler(connection, scope, registeredAgents) {
           if (conn) {
             try {
               if (command.agentId) {
-                // State update for a specific child agent — update via metadata
-                const existing = registeredAgents.get(command.agentId);
+                // State update for a specific child agent — update via metadata.
+                // Try exact match first, then fall back to matching by role name
+                // (TeammateIdle/TaskCompleted hooks may use <team>-<role> format
+                // while agents are registered as <tool_use_id>/<role>).
+                let agentKey = command.agentId;
+                let existing = registeredAgents.get(agentKey);
+                if (!existing) {
+                  // Extract role from fallback ID (e.g. "gsd-coordinator" → "coordinator")
+                  const fallbackRole = command.agentId.includes("-")
+                    ? command.agentId.split("-").slice(1).join("-")
+                    : command.agentId;
+                  for (const [id, entry] of registeredAgents) {
+                    if (entry.role === fallbackRole || id.endsWith(`/${fallbackRole}`)) {
+                      agentKey = id;
+                      existing = entry;
+                      break;
+                    }
+                  }
+                }
                 if (existing) {
                   existing.lastState = command.state;
                   if (command.metadata) {

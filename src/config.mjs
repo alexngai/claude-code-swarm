@@ -83,6 +83,17 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
       enabled: envBool("SWARM_OPENTASKS_ENABLED") ?? Boolean(project.opentasks?.enabled ?? global.opentasks?.enabled),
       autoStart: envBool("SWARM_OPENTASKS_AUTOSTART") ?? (project.opentasks?.autoStart ?? global.opentasks?.autoStart) !== false,
     },
+    inbox: {
+      enabled: envBool("SWARM_INBOX_ENABLED") ?? project.inbox?.enabled ?? global.inbox?.enabled ?? mapEnabled,
+      sqlite: envStr("SWARM_INBOX_SQLITE") ?? project.inbox?.sqlite ?? global.inbox?.sqlite ?? "",
+      httpPort: parseInt(envStr("SWARM_INBOX_HTTP_PORT") ?? project.inbox?.httpPort ?? "0", 10) || 0,
+      webhooks: project.inbox?.webhooks ?? global.inbox?.webhooks ?? [],
+      federation: {
+        peers: project.inbox?.federation?.peers ?? global.inbox?.federation?.peers ?? [],
+        routing: project.inbox?.federation?.routing ?? global.inbox?.federation?.routing ?? undefined,
+        trust: project.inbox?.federation?.trust ?? global.inbox?.federation?.trust ?? undefined,
+      },
+    },
   };
 }
 

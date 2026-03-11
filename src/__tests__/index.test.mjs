@@ -11,7 +11,6 @@ describe("index", () => {
 
   // Path exports
   it("exports SOCKET_PATH", () => expect(typeof index.SOCKET_PATH).toBe("string"));
-  it("exports INBOX_PATH", () => expect(typeof index.INBOX_PATH).toBe("string"));
   it("exports PID_PATH", () => expect(typeof index.PID_PATH).toBe("string"));
   it("exports ROLES_PATH", () => expect(typeof index.ROLES_PATH).toBe("string"));
   it("exports CONFIG_PATH", () => expect(typeof index.CONFIG_PATH).toBe("string"));
@@ -42,9 +41,6 @@ describe("index", () => {
   it("exports writeRoles", () => expect(typeof index.writeRoles).toBe("function"));
 
   // Inbox exports
-  it("exports readInbox", () => expect(typeof index.readInbox).toBe("function"));
-  it("exports clearInbox", () => expect(typeof index.clearInbox).toBe("function"));
-  it("exports writeToInbox", () => expect(typeof index.writeToInbox).toBe("function"));
   it("exports formatInboxAsMarkdown", () => expect(typeof index.formatInboxAsMarkdown).toBe("function"));
   it("exports formatAge", () => expect(typeof index.formatAge).toBe("function"));
 

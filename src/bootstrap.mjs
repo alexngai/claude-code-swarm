@@ -55,6 +55,9 @@ function getRequiredGlobalPackages(config) {
   if (config.opentasks?.enabled) {
     packages.push("opentasks");
   }
+  if (config.inbox?.enabled) {
+    packages.push("agent-inbox");
+  }
   return packages;
 }
 
@@ -314,6 +317,7 @@ export async function bootstrap(pluginDirOverride, sessionId) {
     sessionlogSync: config.sessionlog.sync,
     opentasksEnabled: config.opentasks?.enabled,
     opentasksStatus,
+    inboxEnabled: config.inbox?.enabled,
     sessionId,
   };
 }

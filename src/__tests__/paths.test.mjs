@@ -24,7 +24,6 @@ describe("paths (current environment)", () => {
     expect(typeof paths.TEAMS_DIR).toBe("string");
     expect(typeof paths.MAP_DIR).toBe("string");
     expect(typeof paths.SOCKET_PATH).toBe("string");
-    expect(typeof paths.INBOX_PATH).toBe("string");
     expect(typeof paths.PID_PATH).toBe("string");
     expect(typeof paths.ROLES_PATH).toBe("string");
     expect(typeof paths.IS_GLOBAL_PATHS).toBe("boolean");
@@ -52,7 +51,6 @@ describe("paths (current environment)", () => {
 
   it("MAP runtime files are under MAP_DIR", () => {
     expect(paths.SOCKET_PATH).toBe(path.join(paths.MAP_DIR, "sidecar.sock"));
-    expect(paths.INBOX_PATH).toBe(path.join(paths.MAP_DIR, "inbox.jsonl"));
     expect(paths.PID_PATH).toBe(path.join(paths.MAP_DIR, "sidecar.pid"));
     expect(paths.ROLES_PATH).toBe(path.join(paths.MAP_DIR, "roles.json"));
     expect(paths.SESSIONLOG_STATE_PATH).toBe(path.join(paths.MAP_DIR, "sessionlog-state.json"));
@@ -131,7 +129,6 @@ describe("sessionPaths", () => {
     const sp = paths.sessionPaths(null);
     expect(sp.socketPath).toBe(paths.SOCKET_PATH);
     expect(sp.pidPath).toBe(paths.PID_PATH);
-    expect(sp.inboxPath).toBe(paths.INBOX_PATH);
     expect(sp.sidecarLogPath).toBe(paths.SIDECAR_LOG_PATH);
     expect(sp.sessionDir).toBeNull();
   });
@@ -153,7 +150,6 @@ describe("sessionPaths", () => {
     expect(sp.sessionDir).toBe(path.join(paths.MAP_DIR, "sessions", "abc123"));
     expect(sp.socketPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "sidecar.sock"));
     expect(sp.pidPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "sidecar.pid"));
-    expect(sp.inboxPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "inbox.jsonl"));
     expect(sp.sidecarLogPath).toBe(path.join(paths.MAP_DIR, "sessions", "abc123", "sidecar.log"));
   });
 

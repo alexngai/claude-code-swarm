@@ -89,7 +89,7 @@ export const TMP_DIR = _tmpDir;
 export const TEAMS_DIR = path.join(_tmpDir, "teams");
 export const MAP_DIR = _mapDir;
 export const SOCKET_PATH = path.join(_mapDir, "sidecar.sock");
-export const INBOX_PATH = path.join(_mapDir, "inbox.jsonl");
+export const INBOX_SOCKET_PATH = path.join(_mapDir, "inbox.sock");
 export const PID_PATH = path.join(_mapDir, "sidecar.pid");
 export const ROLES_PATH = path.join(_mapDir, "roles.json");
 export const SESSIONLOG_STATE_PATH = path.join(_mapDir, "sessionlog-state.json");
@@ -169,8 +169,8 @@ export function sessionPaths(sessionId) {
   if (!sessionId) {
     return {
       socketPath: SOCKET_PATH,
+      inboxSocketPath: INBOX_SOCKET_PATH,
       pidPath: PID_PATH,
-      inboxPath: INBOX_PATH,
       sidecarLogPath: SIDECAR_LOG_PATH,
       sessionDir: null,
     };
@@ -181,8 +181,8 @@ export function sessionPaths(sessionId) {
   const dir = path.join(_mapDir, "sessions", safeId);
   return {
     socketPath: path.join(dir, "sidecar.sock"),
+    inboxSocketPath: path.join(dir, "inbox.sock"),
     pidPath: path.join(dir, "sidecar.pid"),
-    inboxPath: path.join(dir, "inbox.jsonl"),
     sidecarLogPath: path.join(dir, "sidecar.log"),
     sessionDir: dir,
   };

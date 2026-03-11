@@ -17,6 +17,7 @@ export function formatBootstrapContext({
   sessionlogStatus,
   sessionlogSync,
   opentasksStatus,
+  inboxEnabled,
 }) {
   const lines = ["## Claude Code Swarm", ""];
 
@@ -44,6 +45,10 @@ export function formatBootstrapContext({
 
   if (opentasksStatus) {
     lines.push(`opentasks: ${opentasksStatus}`);
+  }
+
+  if (inboxEnabled) {
+    lines.push("Inbox: enabled (agent-inbox messaging)");
   }
 
   lines.push("");

@@ -13,6 +13,37 @@ import { SOCKET_PATH, PID_PATH, pluginDir, sessionPaths } from "./paths.mjs";
 import { resolveScope, resolveMapServer, DEFAULTS } from "./config.mjs";
 
 /**
+ * Send a command to the agent-inbox IPC socket and return the response.
+ * Returns the parsed response or null on failure. Never throws.
+ */
+export function sendToInbox(command, socketPath) {
+  return new Promise((resolve) => {
+    const client = net.createConnection(socketPath, () => {
+      client.write(JSON.stringify(command) + "\n");
+    });
+    let buffer = "";
+    client.on("data", (data) => {
+      buffer += data.toString();
+      const idx = buffer.indexOf("\n");
+      if (idx !== -1) {
+        const line = buffer.slice(0, idx);
+        client.end();
+        try {
+          resolve(JSON.parse(line));
+        } catch {
+          resolve(null);
+        }
+      }
+    });
+    client.on("error", () => resolve(null));
+    setTimeout(() => {
+      client.destroy();
+      resolve(null);
+    }, 2000);
+  });
+}
+
+/**
  * Send a command to the sidecar via UNIX socket.
  * Returns true if successful, false otherwise. Never throws.
  */
@@ -66,6 +97,9 @@ export async function startSidecar(config, pluginDirOverride, sessionId) {
     if (sessionId) {
       args.push("--session-id", sessionId);
     }
+    if (config.inbox?.enabled) {
+      args.push("--inbox-config", JSON.stringify(config.inbox));
+    }
 
     const child = spawn("node", args, {
       detached: true,
@@ -108,6 +142,11 @@ export function killSidecar(sessionId) {
   }
   try {
     fs.unlinkSync(sPaths.socketPath);
+  } catch {
+    // ignore
+  }
+  try {
+    fs.unlinkSync(sPaths.inboxSocketPath);
   } catch {
     // ignore
   }

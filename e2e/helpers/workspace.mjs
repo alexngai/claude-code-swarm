@@ -17,9 +17,10 @@ export function createWorkspace(options = {}) {
     config = undefined,
     gitInit = true,
     files = {},
+    tmpdir = os.tmpdir(),
   } = options;
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(tmpdir, prefix));
 
   if (gitInit) {
     execSync("git init -q", { cwd: dir, stdio: "ignore" });

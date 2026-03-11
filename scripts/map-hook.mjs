@@ -28,7 +28,8 @@
 
 import { readConfig, resolveTeamName } from "../src/config.mjs";
 import { readRoles, matchRole } from "../src/roles.mjs";
-import { readInbox, clearInbox, formatInboxAsMarkdown } from "../src/inbox.mjs";
+import { formatInboxAsMarkdown } from "../src/inbox.mjs";
+import { sendToInbox } from "../src/sidecar-client.mjs";
 import { sessionPaths } from "../src/paths.mjs";
 import {
   sendCommand,
@@ -72,24 +73,30 @@ async function handleInject() {
   const hookData = await readStdin();
   const sessionId = hookData.session_id || null;
   const sPaths = sessionPaths(sessionId);
+  const config = readConfig();
 
-  const messages = readInbox(sPaths.inboxPath);
-  if (!messages.length) return;
-  clearInbox(sPaths.inboxPath);
+  if (!config.inbox?.enabled) return;
+
+  // Read from agent-inbox IPC
+  const scope = config.map?.scope || "default";
+  const resp = await sendToInbox(
+    { action: "check_inbox", scope, clear: true },
+    sPaths.inboxSocketPath
+  );
+  if (!resp || !resp.ok || !resp.messages?.length) return;
 
   // Forward task.* events to opentasks graph if enabled
-  const config = readConfig();
   if (config.opentasks?.enabled) {
-    const socketPath = findSocketPath();
-    const taskEvents = messages.filter(
-      (m) => m.payload?.type?.startsWith("task.")
+    const otSocketPath = findSocketPath();
+    const taskEvents = resp.messages.filter(
+      (m) => m.content?.type === "event" && m.content?.event?.startsWith("task.")
     );
     for (const evt of taskEvents) {
-      pushSyncEvent(socketPath, evt.payload).catch(() => {});
+      pushSyncEvent(otSocketPath, evt.content).catch(() => {});
     }
   }
 
-  const output = formatInboxAsMarkdown(messages);
+  const output = formatInboxAsMarkdown(resp.messages);
   if (output) process.stdout.write(output);
 }
 
@@ -124,7 +131,7 @@ async function handleAgentCompleted() {
 
   // Mark agent done in MAP via sidecar (server auto-emits agent_unregistered)
   if (matchedRole) {
-    await sendCommand(config, buildDoneCommand(agentName, matchedRole, teamName), sessionId);
+    await sendCommand(config, buildDoneCommand(agentName, matchedRole, teamName, hookData), sessionId);
   }
 
   // Emit task.completed as a regular MAP message
@@ -180,8 +187,10 @@ async function handleTeammateIdle() {
   const matchedRole = matchRole(teammateName, roles);
 
   // Update teammate state to idle (server auto-emits agent_state_changed)
+  // Use teammate_name as a best-effort agent ID for state updates
+  // (TeammateIdle doesn't have tool_use_id, so we can't reconstruct the full session-based ID)
   const agentId = matchedRole ? `${teamName}-${matchedRole}` : null;
-  await sendCommand(config, buildStateCommand(agentId, "idle"), sessionId);
+  await sendCommand(config, buildStateCommand(agentId, "idle", { teammateName }), sessionId);
 }
 
 async function handleTaskCompleted() {

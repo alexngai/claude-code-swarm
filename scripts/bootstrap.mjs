@@ -41,6 +41,7 @@ try {
     sessionlogStatus: result.sessionlogEnabled ? result.sessionlogStatus : null,
     sessionlogSync: result.sessionlogSync,
     opentasksStatus: result.opentasksEnabled ? result.opentasksStatus : null,
+    inboxEnabled: result.inboxEnabled,
   });
   process.stdout.write(output);
 } catch (err) {

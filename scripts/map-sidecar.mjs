@@ -2,21 +2,24 @@
 /**
  * map-sidecar.mjs — MAP sidecar process for claude-code-swarm
  *
- * Thin wrapper: parses CLI args, delegates to src/ modules for connection,
- * socket server, and command handling.
+ * Two-socket, one-process architecture:
+ * - Lifecycle socket: spawn/done/state/trajectory-checkpoint (existing protocol)
+ * - Inbox socket: agent-inbox IPC for messaging (send/check_inbox/notify)
+ * Both sockets share a single MAP connection.
  *
- * Usage: node map-sidecar.mjs --server ws://localhost:8080 --scope swarm:team --system-id system-id [--session-id id]
+ * Incoming MAP messages are handled by agent-inbox (via useConnection),
+ * which stores them in memory/SQLite and serves them via the inbox IPC socket.
+ * The inject hook reads messages via check_inbox IPC.
  *
- * When --session-id is provided, the sidecar uses per-session paths
- * (socket, PID, inbox, log) scoped to MAP_DIR/sessions/<sessionId>/.
+ * Usage: node map-sidecar.mjs --server ws://localhost:8080 --scope swarm:team --system-id system-id
+ *          [--session-id id] [--inbox-config json] [--inactivity-timeout ms]
  */
 
 import fs from "fs";
 import path from "path";
-import { INBOX_PATH, SOCKET_PATH, PID_PATH, sessionPaths } from "../src/paths.mjs";
+import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths } from "../src/paths.mjs";
 import { connectToMAP } from "../src/map-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
-import { writeToInbox } from "../src/inbox.mjs";
 
 // ── Parse CLI args ──────────────────────────────────────────────────────────
 
@@ -25,22 +28,33 @@ function getArg(name, defaultValue = "") {
   const idx = args.indexOf(`--${name}`);
   return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : defaultValue;
 }
-
 const MAP_SERVER = getArg("server", "ws://localhost:8080");
 const MAP_SCOPE = getArg("scope", "swarm:default");
 const SYSTEM_ID = getArg("system-id", "system-claude-swarm");
 const SESSION_ID = getArg("session-id", "");
-const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const INACTIVITY_TIMEOUT_MS = parseInt(getArg("inactivity-timeout", ""), 10) || 30 * 60 * 1000;
+
+// Parse inbox config (passed as JSON blob from sidecar-client)
+let INBOX_CONFIG = null;
+const inboxConfigJson = getArg("inbox-config", "");
+if (inboxConfigJson) {
+  try {
+    INBOX_CONFIG = JSON.parse(inboxConfigJson);
+  } catch {
+    process.stderr.write("[sidecar] Warning: invalid --inbox-config JSON, inbox disabled\n");
+  }
+}
 
 // Resolve per-session or legacy paths
 const sPaths = SESSION_ID
   ? sessionPaths(SESSION_ID)
-  : { socketPath: SOCKET_PATH, pidPath: PID_PATH, inboxPath: INBOX_PATH };
+  : { socketPath: SOCKET_PATH, inboxSocketPath: INBOX_SOCKET_PATH, pidPath: PID_PATH };
 
 // ── State ───────────────────────────────────────────────────────────────────
 
 let connection = null;
 let socketServer = null;
+let inboxInstance = null;
 let inactivityTimer = null;
 const registeredAgents = new Map();
 
@@ -60,9 +74,16 @@ async function shutdown() {
   process.stderr.write("[sidecar] Shutting down...\n");
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
+
+  // Stop agent-inbox first (it borrows the connection, doesn't own it)
+  if (inboxInstance) {
+    try { await inboxInstance.stop(); } catch { /* ignore */ }
+  }
+
   if (socketServer) socketServer.close();
 
   try { fs.unlinkSync(sPaths.socketPath); } catch { /* ignore */ }
+  try { fs.unlinkSync(sPaths.inboxSocketPath); } catch { /* ignore */ }
   try { fs.unlinkSync(sPaths.pidPath); } catch { /* ignore */ }
 
   if (connection) {
@@ -81,31 +102,70 @@ process.on("uncaughtException", (err) => {
   shutdown();
 });
 
+// ── Agent Inbox Setup ───────────────────────────────────────────────────────
+
+async function startAgentInbox(mapConnection) {
+  if (!INBOX_CONFIG) return null;
+
+  try {
+    const { createAgentInbox } = await import("agent-inbox");
+
+    const peers = INBOX_CONFIG.federation?.peers || [];
+    const federationConfig = peers.length > 0
+      ? {
+          systemId: SYSTEM_ID,
+          peers,
+          routing: INBOX_CONFIG.federation?.routing,
+          trust: INBOX_CONFIG.federation?.trust,
+        }
+      : undefined;
+
+    const opts = {
+      connection: mapConnection,
+      config: {
+        socketPath: sPaths.inboxSocketPath,
+        scope: MAP_SCOPE,
+        federation: federationConfig,
+      },
+      enableFederation: peers.length > 0,
+      sqlitePath: INBOX_CONFIG.sqlite || undefined,
+      httpPort: INBOX_CONFIG.httpPort || 0,
+      webhooks: INBOX_CONFIG.webhooks?.length ? INBOX_CONFIG.webhooks : undefined,
+    };
+
+    const inbox = await createAgentInbox(opts);
+    process.stderr.write(`[sidecar] Agent Inbox started on ${sPaths.inboxSocketPath}\n`);
+    return inbox;
+  } catch (err) {
+    process.stderr.write(`[sidecar] Agent Inbox not available: ${err.message}\n`);
+    return null;
+  }
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
   // Ensure directories exist
-  fs.mkdirSync(path.dirname(sPaths.inboxPath), { recursive: true });
-
-  // Derive team name from scope
-  const teamName = MAP_SCOPE.replace("swarm:", "");
+  fs.mkdirSync(path.dirname(sPaths.pidPath), { recursive: true });
 
   // Connect to MAP server
   connection = await connectToMAP({
     server: MAP_SERVER,
     scope: MAP_SCOPE,
     systemId: SYSTEM_ID,
-    onMessage: (message) => {
+    onMessage: () => {
       resetInactivityTimer();
-      try {
-        writeToInbox(message, sPaths.inboxPath);
-      } catch (err) {
-        process.stderr.write(`[sidecar] Failed to write inbox: ${err.message}\n`);
-      }
+      // Incoming messages are handled by agent-inbox via useConnection().
+      // The sidecar's onMessage only resets the inactivity timer.
     },
   });
 
-  // Start UNIX socket server
+  // Start agent-inbox if configured (shares the MAP connection)
+  if (INBOX_CONFIG && connection) {
+    inboxInstance = await startAgentInbox(connection);
+  }
+
+  // Start lifecycle UNIX socket server
   const onCommand = createCommandHandler(connection, MAP_SCOPE, registeredAgents);
   socketServer = createSocketServer(sPaths.socketPath, (command, client) => {
     resetInactivityTimer();
@@ -115,7 +175,7 @@ async function main() {
   // Start inactivity timer
   resetInactivityTimer();
 
-  process.stderr.write(`[sidecar] Ready${SESSION_ID ? ` (session: ${SESSION_ID})` : ""}\n`);
+  process.stderr.write(`[sidecar] Ready${SESSION_ID ? ` (session: ${SESSION_ID})` : ""}${inboxInstance ? " [inbox active]" : ""}\n`);
 }
 
 main().catch((err) => {

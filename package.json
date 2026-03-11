@@ -22,11 +22,15 @@
   },
   "peerDependencies": {
     "@multi-agent-protocol/sdk": "*",
+    "agent-inbox": "*",
     "opentasks": "*",
     "swarmkit": "*"
   },
   "peerDependenciesMeta": {
     "@multi-agent-protocol/sdk": {
+      "optional": true
+    },
+    "agent-inbox": {
       "optional": true
     },
     "opentasks": {
@@ -41,6 +45,7 @@
     "test:e2e:tier2": "vitest run --config e2e/vitest.config.e2e.mjs -t tier2",
     "test:e2e:tier3": "vitest run --config e2e/vitest.config.e2e.mjs -t tier3",
     "test:e2e:tier4": "vitest run --config e2e/vitest.config.e2e.mjs -t tier4",
+    "test:e2e:tier5": "vitest run --config e2e/vitest.config.e2e.mjs -t tier5",
     "version:patch": "npm version patch --no-git-tag-version && node scripts/sync-version.mjs",
     "version:minor": "npm version minor --no-git-tag-version && node scripts/sync-version.mjs",
     "version:major": "npm version major --no-git-tag-version && node scripts/sync-version.mjs"
@@ -49,6 +54,7 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "agent-inbox": "^0.1.3",
     "vitest": "^4.0.18",
     "ws": "^8.0.0"
   }

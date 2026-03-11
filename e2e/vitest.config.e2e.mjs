@@ -12,7 +12,7 @@ export default defineConfig({
     maxForks: 1,
     server: {
       deps: {
-        external: ["openteams"],
+        external: ["openteams", "agent-inbox", "@multi-agent-protocol/sdk"],
       },
     },
   },
