@@ -44,7 +44,10 @@ export function formatBootstrapContext({
   }
 
   if (opentasksStatus) {
-    lines.push(`opentasks: ${opentasksStatus}`);
+    lines.push(`Opentasks: ${opentasksStatus}`);
+    if (opentasksStatus === "connected" || opentasksStatus === "enabled") {
+      lines.push("Use **opentasks MCP tools** (opentasks__create_task, opentasks__update_task, opentasks__list_tasks) for task management instead of native TaskCreate/TaskUpdate/TaskList.");
+    }
   }
 
   if (inboxEnabled) {
@@ -80,7 +83,7 @@ export function formatBootstrapContext({
 /**
  * Format the team-loaded context output.
  */
-export function formatTeamLoadedContext(generatedDir, templatePath, teamName) {
+export function formatTeamLoadedContext(generatedDir, templatePath, teamName, { opentasksStatus } = {}) {
   const lines = ["## Claude Code Swarm — Team Loaded", ""];
 
   // Include the catalog if available
@@ -123,10 +126,17 @@ export function formatTeamLoadedContext(generatedDir, templatePath, teamName) {
   lines.push("");
   lines.push("### Coordination");
   lines.push("");
-  lines.push("This team uses Claude Code's native team features:");
-  lines.push("- **TaskCreate/TaskUpdate** for task lifecycle");
-  lines.push("- **SendMessage** for agent-to-agent communication");
-  lines.push("- **TeamCreate** for team setup");
+  if (opentasksStatus === "connected" || opentasksStatus === "enabled") {
+    lines.push("This team uses **opentasks MCP tools** for task management:");
+    lines.push("- **opentasks__create_task / opentasks__update_task / opentasks__list_tasks** for task lifecycle");
+    lines.push("- **SendMessage** for agent-to-agent communication");
+    lines.push("- **TeamCreate** for team setup");
+  } else {
+    lines.push("This team uses Claude Code's native team features:");
+    lines.push("- **TaskCreate/TaskUpdate** for task lifecycle");
+    lines.push("- **SendMessage** for agent-to-agent communication");
+    lines.push("- **TeamCreate** for team setup");
+  }
   lines.push("");
   lines.push(
     "**MAP (if enabled):** Lifecycle events are emitted for external observability."

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import net from "net";
 import path from "path";
 import fs from "fs";
-import { findSocketPath, rpcRequest, isDaemonAlive, pushSyncEvent } from "../opentasks-client.mjs";
+import { findSocketPath, rpcRequest, isDaemonAlive, pushSyncEvent, createTask, updateTask } from "../opentasks-client.mjs";
 import { makeTmpDir, cleanupTmpDir } from "./helpers.mjs";
 
 // ── Helper: JSON-RPC 2.0 server ─────────────────────────────────────────────
@@ -243,8 +243,28 @@ describe("opentasks-client", () => {
       return listenServer(server, socketPath);
     }
 
-    it("task.sync sends graph.update with correct params", async () => {
+    it("task.sync with id sends graph.update with correct params", async () => {
       await startSyncServer({ ok: true });
+
+      const result = await pushSyncEvent(socketPath, {
+        type: "task.sync",
+        id: "task-1",
+        uri: "claude://team/task-1",
+        status: "open",
+        subject: "Fix bug",
+        source: "claude-code",
+      });
+
+      expect(result).toBe(true);
+      expect(rpcCalls[0].method).toBe("graph.update");
+      expect(rpcCalls[0].params.id).toBe("task-1");
+      expect(rpcCalls[0].params.status).toBe("open");
+      expect(rpcCalls[0].params.title).toBe("Fix bug");
+      expect(rpcCalls[0].params.metadata.source).toBe("claude-code");
+    });
+
+    it("task.sync without id sends graph.create directly", async () => {
+      await startSyncServer({ created: true });
 
       const result = await pushSyncEvent(socketPath, {
         type: "task.sync",
@@ -255,11 +275,10 @@ describe("opentasks-client", () => {
       });
 
       expect(result).toBe(true);
-      expect(rpcCalls[0].method).toBe("graph.update");
+      expect(rpcCalls[0].method).toBe("graph.create");
+      expect(rpcCalls[0].params.type).toBe("task");
       expect(rpcCalls[0].params.uri).toBe("claude://team/task-1");
-      expect(rpcCalls[0].params.status).toBe("open");
       expect(rpcCalls[0].params.title).toBe("Fix bug");
-      expect(rpcCalls[0].params.metadata.source).toBe("claude-code");
     });
 
     it("task.sync falls back to graph.create when update returns null", async () => {
@@ -275,6 +294,7 @@ describe("opentasks-client", () => {
 
       const result = await pushSyncEvent(socketPath, {
         type: "task.sync",
+        id: "existing-task",
         uri: "claude://team/new-task",
         status: "open",
         subject: "New task",
@@ -284,6 +304,7 @@ describe("opentasks-client", () => {
       expect(result).toBe(true);
       expect(rpcCalls.length).toBe(2);
       expect(rpcCalls[0].method).toBe("graph.update");
+      expect(rpcCalls[0].params.id).toBe("existing-task");
       expect(rpcCalls[1].method).toBe("graph.create");
       expect(rpcCalls[1].params.type).toBe("task");
       expect(rpcCalls[1].params.uri).toBe("claude://team/new-task");
@@ -294,14 +315,28 @@ describe("opentasks-client", () => {
 
       await pushSyncEvent(socketPath, {
         type: "task.claimed",
-        uri: "claude://team/task-2",
+        id: "task-2",
         agent: "worker-1",
         source: "claude-code",
       });
 
       expect(rpcCalls[0].method).toBe("graph.update");
+      expect(rpcCalls[0].params.id).toBe("task-2");
       expect(rpcCalls[0].params.status).toBe("in_progress");
       expect(rpcCalls[0].params.assignee).toBe("worker-1");
+    });
+
+    it("task.claimed returns false when id is missing", async () => {
+      await startSyncServer({ ok: true });
+
+      const result = await pushSyncEvent(socketPath, {
+        type: "task.claimed",
+        agent: "worker-1",
+        source: "claude-code",
+      });
+
+      expect(result).toBe(false);
+      expect(rpcCalls.length).toBe(0);
     });
 
     it("task.unblocked sends graph.update with open status", async () => {
@@ -309,17 +344,31 @@ describe("opentasks-client", () => {
 
       await pushSyncEvent(socketPath, {
         type: "task.unblocked",
-        uri: "claude://team/task-3",
+        id: "task-3",
         unblockedBy: "task-1",
         source: "claude-code",
       });
 
       expect(rpcCalls[0].method).toBe("graph.update");
+      expect(rpcCalls[0].params.id).toBe("task-3");
       expect(rpcCalls[0].params.status).toBe("open");
       expect(rpcCalls[0].params.metadata.unblockedBy).toBe("task-1");
     });
 
-    it("task.linked sends tools.link with from, to, type", async () => {
+    it("task.unblocked returns false when id is missing", async () => {
+      await startSyncServer({ ok: true });
+
+      const result = await pushSyncEvent(socketPath, {
+        type: "task.unblocked",
+        unblockedBy: "task-1",
+        source: "claude-code",
+      });
+
+      expect(result).toBe(false);
+      expect(rpcCalls.length).toBe(0);
+    });
+
+    it("task.linked sends tools.link with fromId, toId, type", async () => {
       await startSyncServer({ ok: true });
 
       await pushSyncEvent(socketPath, {
@@ -331,8 +380,8 @@ describe("opentasks-client", () => {
       });
 
       expect(rpcCalls[0].method).toBe("tools.link");
-      expect(rpcCalls[0].params.from).toBe("task://a");
-      expect(rpcCalls[0].params.to).toBe("task://b");
+      expect(rpcCalls[0].params.fromId).toBe("task://a");
+      expect(rpcCalls[0].params.toId).toBe("task://b");
       expect(rpcCalls[0].params.type).toBe("blocks");
     });
 
@@ -370,6 +419,99 @@ describe("opentasks-client", () => {
 
       // pushSyncEvent catches errors and returns true for task.sync (best-effort success)
       expect(result).toBe(true);
+    });
+  });
+
+  describe("createTask", () => {
+    let tmpDir;
+    let socketPath;
+    let server;
+    let rpcCalls;
+
+    beforeEach(() => {
+      tmpDir = makeTmpDir("opentasks-create-");
+      socketPath = path.join(tmpDir, "test.sock");
+      rpcCalls = [];
+    });
+
+    afterEach(async () => {
+      await closeServer(server);
+      server = null;
+      cleanupTmpDir(tmpDir);
+    });
+
+    it("sends graph.create with type 'task' and provided params", async () => {
+      server = createRpcServer(socketPath, (method, params) => {
+        rpcCalls.push({ method, params });
+        return { id: "new-task-1" };
+      });
+      await listenServer(server, socketPath);
+
+      const result = await createTask(socketPath, {
+        title: "Fix bug",
+        status: "open",
+        assignee: "worker-1",
+        metadata: { source: "test" },
+      });
+
+      expect(result).toEqual({ id: "new-task-1" });
+      expect(rpcCalls[0].method).toBe("graph.create");
+      expect(rpcCalls[0].params.type).toBe("task");
+      expect(rpcCalls[0].params.title).toBe("Fix bug");
+      expect(rpcCalls[0].params.status).toBe("open");
+      expect(rpcCalls[0].params.assignee).toBe("worker-1");
+    });
+
+    it("returns null on socket error", async () => {
+      const result = await createTask(path.join(tmpDir, "nope.sock"), {
+        title: "Test",
+      });
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("updateTask", () => {
+    let tmpDir;
+    let socketPath;
+    let server;
+    let rpcCalls;
+
+    beforeEach(() => {
+      tmpDir = makeTmpDir("opentasks-update-");
+      socketPath = path.join(tmpDir, "test.sock");
+      rpcCalls = [];
+    });
+
+    afterEach(async () => {
+      await closeServer(server);
+      server = null;
+      cleanupTmpDir(tmpDir);
+    });
+
+    it("sends graph.update with id and flat update fields", async () => {
+      server = createRpcServer(socketPath, (method, params) => {
+        rpcCalls.push({ method, params });
+        return { id: "task-1", status: "closed" };
+      });
+      await listenServer(server, socketPath);
+
+      const result = await updateTask(socketPath, "task-1", {
+        status: "closed",
+        metadata: { completedBy: "worker-1" },
+      });
+
+      expect(result).toEqual({ id: "task-1", status: "closed" });
+      expect(rpcCalls[0].method).toBe("graph.update");
+      expect(rpcCalls[0].params.id).toBe("task-1");
+      expect(rpcCalls[0].params.status).toBe("closed");
+      expect(rpcCalls[0].params.metadata.completedBy).toBe("worker-1");
+    });
+
+    it("returns null on socket error", async () => {
+      const result = await updateTask(path.join(tmpDir, "nope.sock"), "task-1", {
+        status: "closed",
+      });
+      expect(result).toBeNull();
     });
   });
 });

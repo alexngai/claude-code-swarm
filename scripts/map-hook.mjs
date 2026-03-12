@@ -4,22 +4,22 @@
  *
  * Thin wrapper: reads action + stdin, dispatches to src/ modules.
  * Uses MAP SDK primitives via the sidecar (spawn/done/state) for agent
- * lifecycle, and typed message payloads for task lifecycle.
- * No custom swarm.* event types.
+ * lifecycle. Task events go through opentasks daemon (graph CRUD) +
+ * MAP event bridge (observability). No custom swarm.* event types.
  *
  * All handlers extract session_id from hook stdin data and pass it
  * through to sendCommand/emitPayload for per-session sidecar routing.
  *
  * Actions:
  *   inject              — Read inbox, format as markdown, forward task.* to opentasks, output to stdout
- *   agent-spawning      — Spawn agent in MAP + emit task.dispatched payload
- *   agent-completed     — Done agent in MAP + emit task.completed payload
+ *   agent-spawning      — Spawn agent in MAP + create task in opentasks + emit bridge event
+ *   agent-completed     — Done agent in MAP + complete task in opentasks + emit bridge event
  *   turn-completed      — Update sidecar state to idle
  *   sessionlog-sync     — Sync sessionlog state to MAP
  *   subagent-start      — Spawn subagent in MAP
  *   subagent-stop       — Done subagent in MAP
  *   teammate-idle       — Update teammate state to idle
- *   task-completed      — Emit task.completed payload
+ *   task-completed      — Complete task in opentasks + emit bridge event
  *   opentasks-mcp-used  — Bridge opentasks MCP tool use → MAP task sync payload
  *
  * Usage: node map-hook.mjs <action>
@@ -39,11 +39,10 @@ import {
   buildSubagentSpawnCommand,
   buildSubagentDoneCommand,
   buildStateCommand,
-  buildTaskDispatchedPayload,
-  buildTaskCompletedPayload,
-  buildTaskStatusPayload,
-  buildTaskSyncPayload,
-  buildOpentasksSyncPayload,
+  handleTaskStatusCompleted,
+  buildOpentasksBridgeCommands,
+  handleNativeTaskCreatedEvent,
+  handleNativeTaskUpdatedEvent,
 } from "../src/map-events.mjs";
 import { syncSessionlog } from "../src/sessionlog.mjs";
 import { findSocketPath, pushSyncEvent } from "../src/opentasks-client.mjs";
@@ -114,9 +113,6 @@ async function handleAgentSpawning() {
   if (matchedRole) {
     await sendCommand(config, buildSpawnCommand(agentName, matchedRole, teamName, hookData), sessionId);
   }
-
-  // Emit task.dispatched as a regular MAP message
-  await emitPayload(config, buildTaskDispatchedPayload(hookData, teamName, matchedRole, agentName), undefined, sessionId);
 }
 
 async function handleAgentCompleted() {
@@ -133,9 +129,6 @@ async function handleAgentCompleted() {
   if (matchedRole) {
     await sendCommand(config, buildDoneCommand(agentName, matchedRole, teamName, hookData), sessionId);
   }
-
-  // Emit task.completed as a regular MAP message
-  await emitPayload(config, buildTaskCompletedPayload(hookData, teamName, matchedRole, agentName), undefined, sessionId);
 }
 
 async function handleTurnCompleted() {
@@ -193,7 +186,7 @@ async function handleTeammateIdle() {
   await sendCommand(config, buildStateCommand(agentId, "idle", { teammateName }), sessionId);
 }
 
-async function handleTaskCompleted() {
+async function handleTaskCompletedHook() {
   const config = readConfig();
   const hookData = await readStdin();
   const sessionId = hookData.session_id || null;
@@ -203,8 +196,8 @@ async function handleTaskCompleted() {
   const teammateName = hookData.teammate_name || "";
   const matchedRole = matchRole(teammateName, roles);
 
-  // Emit task.completed as a regular MAP message
-  await emitPayload(config, buildTaskStatusPayload(hookData, teamName, matchedRole), undefined, sessionId);
+  // Update task in opentasks + emit bridge event to MAP
+  await handleTaskStatusCompleted(config, hookData, teamName, matchedRole, sessionId);
 }
 
 async function handleOpentasksMcpUsed() {
@@ -213,8 +206,28 @@ async function handleOpentasksMcpUsed() {
 
   const hookData = await readStdin();
   const sessionId = hookData.session_id || null;
-  const payload = buildOpentasksSyncPayload(hookData);
-  if (payload) await emitPayload(config, payload, undefined, sessionId);
+  const commands = buildOpentasksBridgeCommands(hookData);
+  for (const cmd of commands) {
+    await sendCommand(config, cmd, sessionId);
+  }
+}
+
+async function handleNativeTaskCreated() {
+  const config = readConfig();
+  if (!config.map?.enabled) return;
+
+  const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
+  await handleNativeTaskCreatedEvent(config, hookData, sessionId);
+}
+
+async function handleNativeTaskUpdated() {
+  const config = readConfig();
+  if (!config.map?.enabled) return;
+
+  const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
+  await handleNativeTaskUpdatedEvent(config, hookData, sessionId);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -230,8 +243,10 @@ async function main() {
       case "subagent-start": await handleSubagentStart(); break;
       case "subagent-stop": await handleSubagentStop(); break;
       case "teammate-idle": await handleTeammateIdle(); break;
-      case "task-completed": await handleTaskCompleted(); break;
+      case "task-completed": await handleTaskCompletedHook(); break;
       case "opentasks-mcp-used": await handleOpentasksMcpUsed(); break;
+      case "native-task-created": await handleNativeTaskCreated(); break;
+      case "native-task-updated": await handleNativeTaskUpdated(); break;
       default:
         process.stderr.write(`[map-hook] Unknown action: ${action}\n`);
     }

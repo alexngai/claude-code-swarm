@@ -9,6 +9,7 @@
 
 import path from "path";
 import { generateAllAgents } from "../src/agent-generator.mjs";
+import { readConfig } from "../src/config.mjs";
 
 const templateDir = process.argv[2];
 const outputDir = process.argv[3] || path.join(process.cwd(), "agents");
@@ -18,7 +19,10 @@ if (!templateDir) {
   process.exit(1);
 }
 
-const result = await generateAllAgents(templateDir, outputDir);
+const config = readConfig();
+const result = await generateAllAgents(templateDir, outputDir, {
+  opentasksEnabled: config.opentasks?.enabled,
+});
 
 if (!result.success) {
   console.error(result.error);

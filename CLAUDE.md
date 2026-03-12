@@ -1,16 +1,17 @@
 # claude-code-swarm
 
-Claude Code plugin that launches agent teams from openteams YAML topologies, using Claude Code's native team features for coordination and optional MAP (Multi-Agent Protocol) for external observability.
+Claude Code plugin that launches agent teams from openteams YAML topologies, using Claude Code's native team features for coordination, optional MAP (Multi-Agent Protocol) for external observability, and optional OpenTasks for cross-system task graph integration.
 
 ## What this plugin does
 
 This plugin bridges [openteams](https://github.com/alexngai/openteams) team templates with Claude Code's native agent teams. It provides:
 
 1. **SessionStart hook** (`scripts/bootstrap.mjs`) — Reads `.swarm/claude-swarm/config.json`, installs deps, initializes swarmkit project packages, starts MAP sidecar if configured, and injects team context
-2. **MAP integration** (`scripts/map-sidecar.mjs`, `scripts/map-hook.mjs`) — Persistent sidecar for external observability via MAP server (lifecycle events, agent registration)
-3. **`/swarm` skill** (`skills/swarm/SKILL.md`) — User-invocable skill to select a template, create a native Claude Code team via `TeamCreate`, and spawn a coordinator agent
-4. **Agent generator** (`scripts/generate-agents.mjs`) — Converts openteams YAML templates into Claude Code AGENT.md files with native team tool instructions
-5. **Team loader** (`scripts/team-loader.mjs`) — Resolves templates, generates artifacts (with per-template caching), writes roles.json for MAP hook integration
+2. **MAP integration** (`scripts/map-sidecar.mjs`, `scripts/map-hook.mjs`) — Persistent sidecar for external observability via MAP server (lifecycle events, agent registration, task bridge events)
+3. **OpenTasks integration** (`src/opentasks-client.mjs`, MCP server) — Optional cross-system task graph that federates Claude Tasks, MAP tasks, and external systems. Registered as an MCP server for agent use; bridge hooks emit task events to MAP for observability
+4. **`/swarm` skill** (`skills/swarm/SKILL.md`) — User-invocable skill to select a template, create a native Claude Code team via `TeamCreate`, and spawn a coordinator agent
+5. **Agent generator** (`scripts/generate-agents.mjs`) — Converts openteams YAML templates into Claude Code AGENT.md files with native team tool instructions
+6. **Team loader** (`scripts/team-loader.mjs`) — Resolves templates, generates artifacts (with per-template caching), writes roles.json for MAP hook integration
 
 ## Plugin structure
 
@@ -29,6 +30,7 @@ claude-code-swarm/
 │   ├── sidecar-client.mjs        # UNIX socket client + recovery
 │   ├── sidecar-server.mjs        # UNIX socket server + command handler
 │   ├── map-events.mjs            # Event builders + emit (sidecar → fallback)
+│   ├── opentasks-client.mjs      # OpenTasks daemon IPC client (socket discovery, task CRUD, sync)
 │   ├── sessionlog.mjs            # Session detection, trajectory checkpoints, sync
 │   ├── template.mjs              # Template resolution + openteams generation
 │   ├── agent-generator.mjs       # AGENT.md generation (tools, frontmatter)
@@ -108,6 +110,20 @@ MAP options:
 - `auth.token` — Authentication token appended as a query parameter to the server URL
 - `auth.param` — Query parameter name for the token (default: `token`)
 
+### With OpenTasks
+```json
+{
+  "template": "gsd",
+  "opentasks": {
+    "enabled": true
+  }
+}
+```
+
+When enabled, the plugin registers an OpenTasks MCP server that agents can use for cross-system task operations (`create_task`, `update_task`, `link`, `annotate`, `list_tasks`, `query`). The MCP server communicates with the OpenTasks daemon over a Unix socket. When both OpenTasks and MAP are enabled, `PostToolUse(opentasks)` hooks bridge MCP tool use into MAP task events for observability.
+
+OpenTasks is independent from Claude's native task system — native tasks have their own `claude://` provider in the OpenTasks graph (see Task concepts below).
+
 ### With sessionlog → MAP sync
 ```json
 {
@@ -158,6 +174,8 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `map.sidecar` | `SWARM_MAP_SIDECAR` | string | `session` |
 | `map.auth.token` | `SWARM_MAP_AUTH_TOKEN` | string | `""` |
 | `map.auth.param` | `SWARM_MAP_AUTH_PARAM` | string | `token` |
+| `opentasks.enabled` | `SWARM_OPENTASKS_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
+| `opentasks.scope` | `SWARM_OPENTASKS_SCOPE` | string | `""` |
 | `sessionlog.enabled` | `SWARM_SESSIONLOG_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `sessionlog.sync` | `SWARM_SESSIONLOG_SYNC` | string | `off` |
 
@@ -167,6 +185,22 @@ Example — point to a MAP server in CI (implicitly enables MAP):
 ```bash
 SWARM_MAP_SERVER=ws://map.ci.internal:8080 claude
 ```
+
+## Task concepts
+
+There are three distinct "task" systems in play. They are independent — each has its own storage and lifecycle:
+
+- **Claude Native Tasks** (`TaskCreate`/`TaskUpdate`/`TaskList`/`TaskStop`) — Team-wide coordination between agents. Stored by Claude Code's internal task system. The OpenTasks `claude-tasks` provider surfaces these as `claude://` nodes in the graph via a filesystem-backed `ClaudeTaskStore` adapter with chokidar file watching — no swarm hooks needed to sync them.
+
+- **OpenTasks** (MCP tools: `create_task`, `update_task`, `link`, etc.) — Cross-system persistent task graph stored in JSONL. Federates tasks from multiple providers (`native://`, `claude://`, `map://`, `beads://`, etc.) via edges. Optional — enabled via `opentasks.enabled` config.
+
+- **MAP Tasks** — Remote tasks on a MAP server, surfaced as `map://` nodes by the OpenTasks MAP provider. Ephemeral/pass-through — no local cache. Used for cross-system coordination when agents on different MAP-connected systems need to share tasks.
+
+The swarm plugin's role is **observability bridging**, not task creation:
+- `PostToolUse(TaskCreate/TaskUpdate)` → emits MAP bridge events so external observers can see native task activity
+- `PostToolUse(opentasks)` → emits MAP bridge events when agents use opentasks MCP tools
+- `TaskCompleted` → updates the opentasks graph + emits MAP bridge event
+- Agent spawning/completion hooks manage MAP agent lifecycle only (not task creation)
 
 ## Architecture
 
@@ -198,15 +232,18 @@ All hooks use MAP SDK primitives — no custom `swarm.*` event types. Clients su
 - `trajectory.checkpoint` for sessionlog sync
 
 Hook dispatch:
-1. **UserPromptSubmit** → `map-hook.mjs inject`: reads MAP inbox, injects external messages into context
-2. **PreToolUse(Task)** → `map-hook.mjs agent-spawning`: spawns agent via `conn.spawn()` (server auto-emits `agent_registered`), sends `task.dispatched` message
-3. **PostToolUse(Task)** → `map-hook.mjs agent-completed`: marks agent done via `conn.callExtension("map/agents/unregister")` (server auto-emits `agent_unregistered`), sends `task.completed` message
-4. **Stop** → `map-hook.mjs turn-completed`: updates sidecar state via `conn.updateState("idle")` (server auto-emits `agent_state_changed`)
-5. **Stop** → `map-hook.mjs sessionlog-sync`: reads sessionlog state, reports `trajectory/checkpoint` to MAP (falls back to `trajectory.checkpoint` message payload if server doesn't support trajectory)
-6. **SubagentStart** → `map-hook.mjs subagent-start`: spawns subagent via `conn.spawn()` with `role: "subagent"`
-7. **SubagentStop** → `map-hook.mjs subagent-stop`: marks subagent done
-8. **TeammateIdle** → `map-hook.mjs teammate-idle`: updates teammate state to idle
-9. **TaskCompleted** → `map-hook.mjs task-completed`: sends `task.completed` message
+1. **UserPromptSubmit** → `map-hook.mjs inject`: reads MAP inbox, injects external messages into context. Forwards incoming `task.*` events to the opentasks graph if `opentasks.enabled`
+2. **PreToolUse(Task)** → `map-hook.mjs agent-spawning`: spawns agent via `conn.spawn()` (server auto-emits `agent_registered`). Agent lifecycle only — does not create tasks
+3. **PostToolUse(Task)** → `map-hook.mjs agent-completed`: marks agent done via sidecar (server auto-emits `agent_unregistered`). Agent lifecycle only — does not complete tasks
+4. **PostToolUse(opentasks)** → `map-hook.mjs opentasks-mcp-used`: bridges opentasks MCP tool use into MAP task events (`bridge-task-created`, `bridge-task-status`, `bridge-task-assigned`, `task.linked`, `task.sync`). Gated on both `opentasks.enabled` and `map.enabled`
+5. **PostToolUse(TaskCreate)** → `map-hook.mjs native-task-created`: emits `bridge-task-created` + `bridge-task-assigned` to MAP. Observability only — native tasks enter the opentasks graph via the `claude-tasks` provider, not this hook
+6. **PostToolUse(TaskUpdate)** → `map-hook.mjs native-task-updated`: emits `bridge-task-status` to MAP. Observability only
+7. **TaskCompleted** → `map-hook.mjs task-completed`: updates task in opentasks daemon (`updateTask`) + emits `bridge-task-status` to MAP
+8. **Stop** → `map-hook.mjs turn-completed`: updates sidecar state via `conn.updateState("idle")` (server auto-emits `agent_state_changed`)
+9. **Stop** → `map-hook.mjs sessionlog-sync`: reads sessionlog state, reports `trajectory/checkpoint` to MAP (falls back to `trajectory.checkpoint` message payload if server doesn't support trajectory)
+10. **SubagentStart** → `map-hook.mjs subagent-start`: spawns subagent via `conn.spawn()` with `role: "subagent"`
+11. **SubagentStop** → `map-hook.mjs subagent-stop`: marks subagent done
+12. **TeammateIdle** → `map-hook.mjs teammate-idle`: updates teammate state to idle
 
 ### MAP sidecar
 
@@ -221,6 +258,19 @@ The sidecar (`scripts/map-sidecar.mjs`) is a persistent Node.js process that:
 
 The hook helper (`scripts/map-hook.mjs`) includes best-effort auto-recovery: if the sidecar is down, it attempts to restart it, with a fire-and-forget direct WebSocket fallback if recovery fails.
 
+### OpenTasks integration
+
+The plugin integrates with OpenTasks at two levels:
+
+**MCP server** — Registered in `plugin.json` as an MCP server (`run-opentasks-mcp.sh`). Conditionally started based on `opentasks.enabled` config. Agents use MCP tools (`create_task`, `update_task`, `link`, `annotate`, `list_tasks`, `query`) to interact with the OpenTasks daemon over a Unix socket.
+
+**Daemon IPC client** (`src/opentasks-client.mjs`) — Direct IPC to the OpenTasks daemon for hook-initiated operations. Socket discovery follows priority: `.swarm/opentasks/` → `.opentasks/` → `.git/opentasks/` → walk up. Used by:
+- `task-completed` hook → `updateTask()` to mark tasks closed
+- `inject` hook → `pushSyncEvent()` to forward incoming MAP `task.*` events to the graph
+- `map-events.mjs` → `handleTaskCreated()`/`handleTaskCompleted()` (available for two-step pattern: create in opentasks + emit MAP bridge event)
+
+**Relationship to native Claude Tasks** — Native tasks (`TaskCreate`/`TaskUpdate`) enter the OpenTasks graph via the `claude-tasks` provider (in the OpenTasks project), which uses a filesystem-backed `ClaudeTaskStore` adapter with chokidar file watching. The swarm plugin does NOT need to push native tasks into OpenTasks — the provider handles this reactively. The swarm hooks for `PostToolUse(TaskCreate/TaskUpdate)` only emit MAP bridge events for observability.
+
 ### Agent registration
 
 Only topology-defined roles (from `team.yaml`) get full MAP agent registrations via `conn.spawn()`. Subagents are also spawned in MAP with `role: "subagent"` for observability. Role matching is done via `.swarm/claude-swarm/tmp/map/roles.json` written during team loading. All agent context (role, template, agentType, isTeamRole) goes into agent `metadata`.
@@ -230,20 +280,21 @@ Only topology-defined roles (from `team.yaml`) get full MAP agent registrations 
 All logic lives in `src/` as importable ES modules. Scripts in `scripts/` are thin CLI wrappers (~20-30 lines each) that parse args, call `src/` functions, and handle stdout/stderr.
 
 ```
-src/config.mjs          ← readConfig(), resolveScope(), resolveTeamName()
-src/paths.mjs            ← SWARM_DIR, CONFIG_PATH, TMP_DIR, TEAMS_DIR, MAP_DIR, teamDir()
-src/roles.mjs            ← readRoles(), matchRole(), writeRoles()
-src/inbox.mjs            ← readInbox(), clearInbox(), formatInboxAsMarkdown()
-src/map-connection.mjs   ← connectToMAP(), fireAndForget(), fireAndForgetTrajectory()
-src/sidecar-client.mjs   ← sendToSidecar(), ensureSidecar(), startSidecar()
-src/sidecar-server.mjs   ← createSocketServer(), createCommandHandler()
-src/map-events.mjs       ← sendCommand(), emitPayload(), build*Command(), build*Payload()
-src/sessionlog.mjs       ← findActiveSession(), buildTrajectoryCheckpoint(), syncSessionlog()
-src/template.mjs         ← resolveTemplatePath(), listAvailableTemplates(), generateTeamArtifacts()
-src/agent-generator.mjs  ← generateAllAgents(), generateAgentMd()
-src/context-output.mjs   ← format*Context(), format*Message()
-src/bootstrap.mjs        ← bootstrap() — full SessionStart orchestration
-src/index.mjs            ← barrel re-export of public API
+src/config.mjs            ← readConfig(), resolveScope(), resolveTeamName()
+src/paths.mjs              ← SWARM_DIR, CONFIG_PATH, TMP_DIR, TEAMS_DIR, MAP_DIR, teamDir()
+src/roles.mjs              ← readRoles(), matchRole(), writeRoles()
+src/inbox.mjs              ← readInbox(), clearInbox(), formatInboxAsMarkdown()
+src/map-connection.mjs     ← connectToMAP(), fireAndForget(), fireAndForgetTrajectory()
+src/sidecar-client.mjs     ← sendToSidecar(), ensureSidecar(), startSidecar()
+src/sidecar-server.mjs     ← createSocketServer(), createCommandHandler()
+src/map-events.mjs         ← sendCommand(), emitPayload(), build*Command(), handle*Event()
+src/opentasks-client.mjs   ← createTask(), updateTask(), pushSyncEvent(), findSocketPath()
+src/sessionlog.mjs         ← findActiveSession(), buildTrajectoryCheckpoint(), syncSessionlog()
+src/template.mjs           ← resolveTemplatePath(), listAvailableTemplates(), generateTeamArtifacts()
+src/agent-generator.mjs    ← generateAllAgents(), generateAgentMd()
+src/context-output.mjs     ← format*Context(), format*Message()
+src/bootstrap.mjs          ← bootstrap() — full SessionStart orchestration
+src/index.mjs              ← barrel re-export of public API
 ```
 
 ## Key dependencies
@@ -267,4 +318,7 @@ Runtime:
 - Switching between templates is instant if previously cached — artifacts are stored per template in `.swarm/claude-swarm/tmp/teams/<template>/`
 - openteams is config/generation only — Claude Code native teams handle all runtime coordination, MAP handles external observability
 - All logic is in `src/` modules — scripts are thin wrappers, making functions importable and testable
+- Agent spawning/completion hooks are purely MAP agent lifecycle — they do not create or complete tasks. Task creation is handled by agents using `TaskCreate` (native) or opentasks MCP tools
+- Native Claude tasks enter the OpenTasks graph via the `claude-tasks` provider's filesystem watcher, not via swarm hooks. Swarm hooks for `TaskCreate`/`TaskUpdate` only emit MAP bridge events
+- The `opentasks-client.mjs` communicates with the OpenTasks daemon via JSON-RPC 2.0 over Unix socket with best-effort auto-recovery
 - See `docs/design.md` for detailed architecture decisions and `docs/implementation-plan.md` for phase breakdown

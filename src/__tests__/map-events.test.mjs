@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  buildAgentId,
   buildSpawnCommand,
   buildDoneCommand,
   buildSubagentSpawnCommand,
   buildSubagentDoneCommand,
   buildStateCommand,
-  buildTaskDispatchedPayload,
-  buildTaskCompletedPayload,
-  buildTaskStatusPayload,
   buildTaskSyncPayload,
-  buildOpentasksSyncPayload,
+  buildOpentasksBridgeCommands,
+  handleTaskCreated,
+  handleTaskCompleted,
+  handleTaskStatusCompleted,
 } from "../map-events.mjs";
 import {
   makeHookData,
@@ -22,20 +23,37 @@ import {
 describe("map-events", () => {
   // ── Agent lifecycle commands ──────────────────────────────────────────────
 
+  describe("buildAgentId", () => {
+    it("uses tool_use_id/role format", () => {
+      const id = buildAgentId("agent-1", "executor", makeHookData());
+      expect(id).toBe("tool-123/executor");
+    });
+
+    it("falls back to agentName when no role matched", () => {
+      const id = buildAgentId("my-agent", null, makeHookData());
+      expect(id).toBe("tool-123/my-agent");
+    });
+
+    it("uses session_id when no tool_use_id", () => {
+      const id = buildAgentId("a", "exec", { session_id: "sess-1" });
+      expect(id).toBe("sess-1/exec");
+    });
+  });
+
   describe("buildSpawnCommand", () => {
     it("returns action 'spawn'", () => {
       const cmd = buildSpawnCommand("agent-1", "executor", "gsd", makeHookData());
       expect(cmd.action).toBe("spawn");
     });
 
-    it("sets agentId to teamName-role when matched", () => {
+    it("sets agentId to tool_use_id/role format when matched", () => {
       const cmd = buildSpawnCommand("agent-1", "executor", "gsd", makeHookData());
-      expect(cmd.agent.agentId).toBe("gsd-executor");
+      expect(cmd.agent.agentId).toBe("tool-123/executor");
     });
 
-    it("sets agentId to agentName when no role match", () => {
+    it("sets agentId to tool_use_id/agentName when no role match", () => {
       const cmd = buildSpawnCommand("my-agent", null, "gsd", makeHookData());
-      expect(cmd.agent.agentId).toBe("my-agent");
+      expect(cmd.agent.agentId).toBe("tool-123/my-agent");
     });
 
     it("sets name to matchedRole when provided", () => {
@@ -53,7 +71,13 @@ describe("map-events", () => {
       expect(buildSpawnCommand("a", null, "t", makeHookData()).agent.role).toBe("internal");
     });
 
-    it("sets scopes to swarm:teamName", () => {
+    it("uses session_id for scopes when available", () => {
+      const hookData = { ...makeHookData(), session_id: "sess-abc" };
+      const cmd = buildSpawnCommand("a", null, "my-team", hookData);
+      expect(cmd.agent.scopes).toEqual(["sess-abc"]);
+    });
+
+    it("falls back to swarm:teamName for scopes when no session_id", () => {
       const cmd = buildSpawnCommand("a", null, "my-team", makeHookData());
       expect(cmd.agent.scopes).toEqual(["swarm:my-team"]);
     });
@@ -66,6 +90,11 @@ describe("map-events", () => {
     it("sets metadata.template to teamName", () => {
       const cmd = buildSpawnCommand("a", null, "gsd", makeHookData());
       expect(cmd.agent.metadata.template).toBe("gsd");
+    });
+
+    it("sets metadata.toolUseId from hookData", () => {
+      const cmd = buildSpawnCommand("a", null, "t", makeHookData({ toolUseId: "tu-xyz" }));
+      expect(cmd.agent.metadata.toolUseId).toBe("tu-xyz");
     });
 
     it("truncates task in metadata to 300 characters", () => {
@@ -82,22 +111,22 @@ describe("map-events", () => {
 
   describe("buildDoneCommand", () => {
     it("returns action 'done'", () => {
-      const cmd = buildDoneCommand("a", "executor", "t");
+      const cmd = buildDoneCommand("a", "executor", "t", makeHookData());
       expect(cmd.action).toBe("done");
     });
 
-    it("sets agentId to teamName-role when matched", () => {
-      const cmd = buildDoneCommand("a", "executor", "gsd");
-      expect(cmd.agentId).toBe("gsd-executor");
+    it("sets agentId to tool_use_id/role format when matched", () => {
+      const cmd = buildDoneCommand("a", "executor", "gsd", makeHookData());
+      expect(cmd.agentId).toBe("tool-123/executor");
     });
 
-    it("sets agentId to agentName when no match", () => {
-      const cmd = buildDoneCommand("my-agent", null, "gsd");
-      expect(cmd.agentId).toBe("my-agent");
+    it("sets agentId to tool_use_id/agentName when no match", () => {
+      const cmd = buildDoneCommand("my-agent", null, "gsd", makeHookData());
+      expect(cmd.agentId).toBe("tool-123/my-agent");
     });
 
     it("sets reason to 'completed'", () => {
-      const cmd = buildDoneCommand("a", null, "t");
+      const cmd = buildDoneCommand("a", null, "t", makeHookData());
       expect(cmd.reason).toBe("completed");
     });
   });
@@ -218,110 +247,299 @@ describe("map-events", () => {
     });
   });
 
-  // ── Task lifecycle payloads ───────────────────────────────────────────────
+  // ── Task lifecycle handlers (opentasks daemon + MAP event bridge) ─────────
+  //
+  // These test the full two-step flow:
+  // 1. Task CRUD in opentasks daemon (via mocked opentasks-client)
+  // 2. Bridge event emission to MAP (via mocked sidecar-client capturing commands)
 
-  describe("buildTaskDispatchedPayload", () => {
-    it("sets type to 'task.dispatched'", () => {
-      const p = buildTaskDispatchedPayload(makeHookData(), "t", null, "agent");
-      expect(p.type).toBe("task.dispatched");
+  describe("handleTaskCreated", () => {
+    let mockCreateTask;
+    let mockFindSocketPath;
+    let sidecarCommands;
+
+    beforeEach(async () => {
+      mockCreateTask = vi.fn().mockResolvedValue({ id: "created-task-1" });
+      mockFindSocketPath = vi.fn().mockReturnValue("/tmp/test.sock");
+      sidecarCommands = [];
+
+      // Mock opentasks-client (dynamic import target)
+      vi.doMock("../opentasks-client.mjs", () => ({
+        createTask: mockCreateTask,
+        findSocketPath: mockFindSocketPath,
+      }));
+
+      // Mock sidecar-client to capture commands sent via sendCommand
+      vi.doMock("../sidecar-client.mjs", () => ({
+        sendToSidecar: vi.fn(async (cmd) => {
+          sidecarCommands.push(cmd);
+          return true;
+        }),
+        ensureSidecar: vi.fn().mockResolvedValue(false),
+      }));
+
+      // Mock paths to avoid filesystem access
+      vi.doMock("../paths.mjs", () => ({
+        sessionPaths: vi.fn(() => ({
+          socketPath: "/tmp/sidecar.sock",
+          inboxSocketPath: "/tmp/inbox.sock",
+        })),
+      }));
     });
 
-    it("sets taskId from hook data", () => {
-      const p = buildTaskDispatchedPayload(makeHookData({ toolUseId: "xyz" }), "t", null, "a");
-      expect(p.taskId).toBe("xyz");
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.resetModules();
     });
 
-    it("sets from to teamName-sidecar", () => {
-      const p = buildTaskDispatchedPayload(makeHookData(), "my-team", null, "a");
-      expect(p.from).toBe("my-team-sidecar");
+    it("creates task in opentasks with correct params", async () => {
+      const { handleTaskCreated } = await import("../map-events.mjs");
+      const hookData = makeHookData({ prompt: "Fix the bug" });
+      const config = { map: { enabled: true } };
+
+      await handleTaskCreated(config, hookData, "gsd", "executor", "test-agent", null);
+
+      expect(mockCreateTask).toHaveBeenCalledWith("/tmp/test.sock", expect.objectContaining({
+        title: "Fix the bug",
+        status: "open",
+        content: "Fix the bug",
+        assignee: "gsd-executor",
+        metadata: expect.objectContaining({
+          source: "claude-code-swarm",
+          teamName: "gsd",
+          role: "executor",
+        }),
+      }));
     });
 
-    it("sets targetAgent to teamName-role when matched", () => {
-      const p = buildTaskDispatchedPayload(makeHookData(), "gsd", "executor", "a");
-      expect(p.targetAgent).toBe("gsd-executor");
+    it("emits bridge-task-created command with task data", async () => {
+      const { handleTaskCreated } = await import("../map-events.mjs");
+      const hookData = makeHookData({ prompt: "Fix the bug" });
+      const config = { map: { enabled: true } };
+
+      await handleTaskCreated(config, hookData, "gsd", "executor", "test-agent", "sess-1");
+
+      const createdCmd = sidecarCommands.find((c) => c.action === "bridge-task-created");
+      expect(createdCmd).toBeDefined();
+      expect(createdCmd.task.id).toBe("created-task-1");
+      expect(createdCmd.task.title).toBe("Fix the bug");
+      expect(createdCmd.task.status).toBe("open");
+      expect(createdCmd.task.assignee).toBe("gsd-executor");
+      expect(createdCmd.agentId).toBe("gsd-executor");
     });
 
-    it("sets targetAgent to agentName when no match", () => {
-      const p = buildTaskDispatchedPayload(makeHookData(), "gsd", null, "my-agent");
-      expect(p.targetAgent).toBe("my-agent");
+    it("emits bridge-task-assigned command when assignee exists", async () => {
+      const { handleTaskCreated } = await import("../map-events.mjs");
+      const hookData = makeHookData({ prompt: "Do X" });
+      const config = { map: { enabled: true } };
+
+      await handleTaskCreated(config, hookData, "gsd", "executor", "test-agent", null);
+
+      const assignedCmd = sidecarCommands.find((c) => c.action === "bridge-task-assigned");
+      expect(assignedCmd).toBeDefined();
+      expect(assignedCmd.taskId).toBe("created-task-1");
+      expect(assignedCmd.assignee).toBe("gsd-executor");
     });
 
-    it("truncates description to 300 characters", () => {
-      const long = "y".repeat(500);
-      const p = buildTaskDispatchedPayload(makeHookData({ prompt: long }), "t", null, "a");
-      expect(p.description.length).toBe(300);
+    it("uses agentName as assignee when no role matched", async () => {
+      const { handleTaskCreated } = await import("../map-events.mjs");
+      const hookData = makeHookData();
+      const config = { map: { enabled: true } };
+
+      await handleTaskCreated(config, hookData, "gsd", null, "my-agent", null);
+
+      expect(mockCreateTask).toHaveBeenCalledWith("/tmp/test.sock", expect.objectContaining({
+        assignee: "my-agent",
+      }));
+    });
+
+    it("falls back to tool_use_id for taskId when createTask returns null", async () => {
+      mockCreateTask.mockResolvedValue(null);
+      const { handleTaskCreated } = await import("../map-events.mjs");
+      const hookData = makeHookData({ toolUseId: "tu-fallback" });
+      const config = { map: { enabled: true } };
+
+      await handleTaskCreated(config, hookData, "gsd", null, "agent", null);
+
+      const createdCmd = sidecarCommands.find((c) => c.action === "bridge-task-created");
+      expect(createdCmd.task.id).toBe("tu-fallback");
     });
   });
 
-  describe("buildTaskCompletedPayload", () => {
-    it("sets type to 'task.completed'", () => {
-      const p = buildTaskCompletedPayload(makeHookData(), "t", null, "a");
-      expect(p.type).toBe("task.completed");
+  describe("handleTaskCompleted", () => {
+    let mockUpdateTask;
+    let mockFindSocketPath;
+    let sidecarCommands;
+
+    beforeEach(() => {
+      mockUpdateTask = vi.fn().mockResolvedValue({ id: "task-1" });
+      mockFindSocketPath = vi.fn().mockReturnValue("/tmp/test.sock");
+      sidecarCommands = [];
+
+      vi.doMock("../opentasks-client.mjs", () => ({
+        updateTask: mockUpdateTask,
+        findSocketPath: mockFindSocketPath,
+      }));
+
+      vi.doMock("../sidecar-client.mjs", () => ({
+        sendToSidecar: vi.fn(async (cmd) => {
+          sidecarCommands.push(cmd);
+          return true;
+        }),
+        ensureSidecar: vi.fn().mockResolvedValue(false),
+      }));
+
+      vi.doMock("../paths.mjs", () => ({
+        sessionPaths: vi.fn(() => ({
+          socketPath: "/tmp/sidecar.sock",
+          inboxSocketPath: "/tmp/inbox.sock",
+        })),
+      }));
     });
 
-    it("sets agent to teamName-role when matched", () => {
-      const p = buildTaskCompletedPayload(makeHookData(), "gsd", "exec", "a");
-      expect(p.agent).toBe("gsd-exec");
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.resetModules();
     });
 
-    it("sets agent to agentName when no match", () => {
-      const p = buildTaskCompletedPayload(makeHookData(), "gsd", null, "my-agent");
-      expect(p.agent).toBe("my-agent");
+    it("updates task to closed status in opentasks", async () => {
+      const { handleTaskCompleted } = await import("../map-events.mjs");
+      const hookData = makeHookData({ toolUseId: "task-42" });
+      const config = { map: { enabled: true } };
+
+      await handleTaskCompleted(config, hookData, "gsd", "executor", "test-agent", null);
+
+      expect(mockUpdateTask).toHaveBeenCalledWith("/tmp/test.sock", "task-42", expect.objectContaining({
+        status: "closed",
+        metadata: expect.objectContaining({
+          completedBy: "gsd-executor",
+          source: "claude-code-swarm",
+        }),
+      }));
     });
 
-    it("sets status to 'completed'", () => {
-      const p = buildTaskCompletedPayload(makeHookData(), "t", null, "a");
-      expect(p.status).toBe("completed");
+    it("emits bridge-task-status with completed status", async () => {
+      const { handleTaskCompleted } = await import("../map-events.mjs");
+      const hookData = makeHookData({ toolUseId: "task-42" });
+      const config = { map: { enabled: true } };
+
+      await handleTaskCompleted(config, hookData, "gsd", "executor", "test-agent", "sess-2");
+
+      const statusCmd = sidecarCommands.find((c) => c.action === "bridge-task-status");
+      expect(statusCmd).toBeDefined();
+      expect(statusCmd.taskId).toBe("task-42");
+      expect(statusCmd.previous).toBe("open");
+      expect(statusCmd.current).toBe("completed");
+      expect(statusCmd.agentId).toBe("gsd-executor");
+    });
+
+    it("skips opentasks update when no taskId", async () => {
+      const { handleTaskCompleted } = await import("../map-events.mjs");
+      const hookData = { tool_input: {} }; // no tool_use_id
+      const config = { map: { enabled: true } };
+
+      await handleTaskCompleted(config, hookData, "gsd", null, "agent", null);
+
+      expect(mockUpdateTask).not.toHaveBeenCalled();
+    });
+
+    it("still emits bridge event even when no taskId", async () => {
+      const { handleTaskCompleted } = await import("../map-events.mjs");
+      const hookData = { tool_input: {} };
+      const config = { map: { enabled: true } };
+
+      await handleTaskCompleted(config, hookData, "gsd", null, "agent", null);
+
+      const statusCmd = sidecarCommands.find((c) => c.action === "bridge-task-status");
+      expect(statusCmd).toBeDefined();
+      expect(statusCmd.current).toBe("completed");
     });
   });
 
-  describe("buildTaskStatusPayload", () => {
-    it("sets type to 'task.completed'", () => {
-      const p = buildTaskStatusPayload(makeTaskCompletedData(), "gsd", null);
-      expect(p.type).toBe("task.completed");
+  describe("handleTaskStatusCompleted", () => {
+    let mockUpdateTask;
+    let mockFindSocketPath;
+    let sidecarCommands;
+
+    beforeEach(() => {
+      mockUpdateTask = vi.fn().mockResolvedValue({ id: "task-1" });
+      mockFindSocketPath = vi.fn().mockReturnValue("/tmp/test.sock");
+      sidecarCommands = [];
+
+      vi.doMock("../opentasks-client.mjs", () => ({
+        updateTask: mockUpdateTask,
+        findSocketPath: mockFindSocketPath,
+      }));
+
+      vi.doMock("../sidecar-client.mjs", () => ({
+        sendToSidecar: vi.fn(async (cmd) => {
+          sidecarCommands.push(cmd);
+          return true;
+        }),
+        ensureSidecar: vi.fn().mockResolvedValue(false),
+      }));
+
+      vi.doMock("../paths.mjs", () => ({
+        sessionPaths: vi.fn(() => ({
+          socketPath: "/tmp/sidecar.sock",
+          inboxSocketPath: "/tmp/inbox.sock",
+        })),
+      }));
     });
 
-    it("sets taskId from hookData", () => {
-      const p = buildTaskStatusPayload(makeTaskCompletedData({ taskId: "t-99" }), "t", null);
-      expect(p.taskId).toBe("t-99");
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.resetModules();
     });
 
-    it("sets taskSubject from hookData", () => {
-      const p = buildTaskStatusPayload(makeTaskCompletedData({ taskSubject: "Fix bug" }), "t", null);
-      expect(p.taskSubject).toBe("Fix bug");
+    it("updates task with richer metadata from TaskCompleted hook", async () => {
+      const { handleTaskStatusCompleted } = await import("../map-events.mjs");
+      const hookData = makeTaskCompletedData({
+        taskId: "task-99",
+        taskSubject: "Fix bug",
+        teammateName: "builder",
+        teamName: "gsd",
+      });
+      const config = { map: { enabled: true } };
+
+      await handleTaskStatusCompleted(config, hookData, "gsd", "builder", null);
+
+      expect(mockUpdateTask).toHaveBeenCalledWith("/tmp/test.sock", "task-99", expect.objectContaining({
+        status: "closed",
+        title: "Fix bug",
+        metadata: expect.objectContaining({
+          completedBy: "builder",
+          teamName: "gsd",
+          role: "builder",
+          isTeamRole: true,
+          source: "claude-code-swarm",
+        }),
+      }));
     });
 
-    it("truncates taskDescription to 300 characters", () => {
-      const longDesc = "d".repeat(500);
-      const p = buildTaskStatusPayload(makeTaskCompletedData({ taskDescription: longDesc }), "t", null);
-      expect(p.taskDescription.length).toBe(300);
+    it("emits bridge-task-status with in_progress → completed", async () => {
+      const { handleTaskStatusCompleted } = await import("../map-events.mjs");
+      const hookData = makeTaskCompletedData({ taskId: "task-99", teammateName: "builder" });
+      const config = { map: { enabled: true } };
+
+      await handleTaskStatusCompleted(config, hookData, "gsd", "builder", "sess-3");
+
+      const statusCmd = sidecarCommands.find((c) => c.action === "bridge-task-status");
+      expect(statusCmd).toBeDefined();
+      expect(statusCmd.taskId).toBe("task-99");
+      expect(statusCmd.previous).toBe("in_progress");
+      expect(statusCmd.current).toBe("completed");
+      expect(statusCmd.agentId).toBe("builder");
     });
 
-    it("sets agent from hookData.teammate_name", () => {
-      const p = buildTaskStatusPayload(makeTaskCompletedData({ teammateName: "builder" }), "t", "builder");
-      expect(p.agent).toBe("builder");
-    });
+    it("skips opentasks update when no taskId", async () => {
+      const { handleTaskStatusCompleted } = await import("../map-events.mjs");
+      const hookData = { teammate_name: "builder" }; // no task_id
+      const config = { map: { enabled: true } };
 
-    it("sets teamName from hookData", () => {
-      const p = buildTaskStatusPayload(makeTaskCompletedData({ teamName: "gsd" }), "t", null);
-      expect(p.teamName).toBe("gsd");
-    });
+      await handleTaskStatusCompleted(config, hookData, "gsd", "builder", null);
 
-    it("falls back to config teamName", () => {
-      const p = buildTaskStatusPayload({ task_id: "1" }, "fallback", null);
-      expect(p.teamName).toBe("fallback");
-    });
-
-    it("sets role from matchedRole", () => {
-      const p = buildTaskStatusPayload(makeTaskCompletedData(), "t", "implementer");
-      expect(p.role).toBe("implementer");
-      expect(p.isTeamRole).toBe(true);
-    });
-
-    it("sets role to 'unknown' when no match", () => {
-      const p = buildTaskStatusPayload(makeTaskCompletedData(), "t", null);
-      expect(p.role).toBe("unknown");
-      expect(p.isTeamRole).toBe(false);
+      expect(mockUpdateTask).not.toHaveBeenCalled();
     });
   });
 
@@ -348,9 +566,9 @@ describe("map-events", () => {
       expect(p.status).toBe("open");
     });
 
-    it("maps status completed to closed", () => {
+    it("maps status completed to completed", () => {
       const p = buildTaskSyncPayload({ tool_input: { status: "completed" } }, "t");
-      expect(p.status).toBe("closed");
+      expect(p.status).toBe("completed");
     });
 
     it("maps status in_progress to in_progress", () => {
@@ -379,101 +597,204 @@ describe("map-events", () => {
     });
   });
 
-  describe("buildOpentasksSyncPayload", () => {
-    it("link tool returns task.linked payload", () => {
-      const p = buildOpentasksSyncPayload({
-        tool_name: "mcp__opentasks__link",
-        tool_input: { from: "task://a", to: "task://b", type: "blocks" },
+  describe("buildOpentasksBridgeCommands", () => {
+    // ── create_task ──────────────────────────────────────────────────────
+
+    it("create_task returns bridge-task-created + bridge-task-assigned", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__create_task",
+        tool_input: { title: "Fix bug", assignee: "worker-1" },
+        tool_output: JSON.stringify({ content: [{ text: JSON.stringify({ id: "task-42", title: "Fix bug", status: "open", assignee: "worker-1" }) }] }),
       });
-      expect(p.type).toBe("task.linked");
-      expect(p.from).toBe("task://a");
-      expect(p.to).toBe("task://b");
-      expect(p.linkType).toBe("blocks");
-      expect(p.source).toBe("opentasks");
+      expect(cmds).toHaveLength(2);
+      expect(cmds[0].action).toBe("bridge-task-created");
+      expect(cmds[0].task.id).toBe("task-42");
+      expect(cmds[0].task.title).toBe("Fix bug");
+      expect(cmds[0].task.assignee).toBe("worker-1");
+      expect(cmds[0].agentId).toBe("worker-1");
+      expect(cmds[1].action).toBe("bridge-task-assigned");
+      expect(cmds[1].taskId).toBe("task-42");
+      expect(cmds[1].assignee).toBe("worker-1");
     });
 
-    it("link tool defaults linkType to related and remove to false", () => {
-      const p = buildOpentasksSyncPayload({
-        tool_name: "mcp__opentasks__link",
-        tool_input: { from: "a", to: "b" },
+    it("create_task uses input fields when tool_output is missing", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__create_task",
+        tool_input: { title: "New task", status: "open" },
       });
-      expect(p.linkType).toBe("related");
-      expect(p.remove).toBe(false);
+      expect(cmds).toHaveLength(1); // no assignee → no assigned command
+      expect(cmds[0].action).toBe("bridge-task-created");
+      expect(cmds[0].task.title).toBe("New task");
+      expect(cmds[0].task.id).toBe("");
+      expect(cmds[0].agentId).toBe("opentasks"); // default when no assignee
     });
 
-    it("link tool returns null when from or to is missing", () => {
-      expect(buildOpentasksSyncPayload({
-        tool_name: "mcp__opentasks__link",
-        tool_input: { from: "a" },
-      })).toBeNull();
-      expect(buildOpentasksSyncPayload({
-        tool_name: "mcp__opentasks__link",
-        tool_input: { to: "b" },
-      })).toBeNull();
+    it("create_task returns empty when no id and no title", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__create_task",
+        tool_input: {},
+      });
+      expect(cmds).toHaveLength(0);
     });
 
-    it("annotate tool returns task.sync with annotation", () => {
-      const p = buildOpentasksSyncPayload({
+    it("create_task parses already-parsed tool_output", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__create_task",
+        tool_input: {},
+        tool_output: { id: "direct-1", title: "Direct", status: "open" },
+      });
+      expect(cmds[0].task.id).toBe("direct-1");
+    });
+
+    // ── update_task ──────────────────────────────────────────────────────
+
+    it("update_task returns bridge-task-status", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__update_task",
+        tool_input: { id: "task-1", status: "completed" },
+        tool_output: JSON.stringify({ content: [{ text: JSON.stringify({ id: "task-1", status: "completed", assignee: "builder" }) }] }),
+      });
+      expect(cmds).toHaveLength(1);
+      expect(cmds[0].action).toBe("bridge-task-status");
+      expect(cmds[0].taskId).toBe("task-1");
+      expect(cmds[0].current).toBe("completed");
+      expect(cmds[0].agentId).toBe("builder");
+    });
+
+    it("update_task uses input.transition as status fallback", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__update_task",
+        tool_input: { id: "task-2", transition: "close" },
+      });
+      expect(cmds[0].current).toBe("close");
+    });
+
+    it("update_task returns empty when no id", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__update_task",
+        tool_input: { status: "completed" },
+      });
+      expect(cmds).toHaveLength(0);
+    });
+
+    it("update_task returns empty when no status change", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__update_task",
+        tool_input: { id: "task-3", title: "Renamed" }, // no status/transition
+      });
+      expect(cmds).toHaveLength(0);
+    });
+
+    it("update_task sets previous to undefined when explicit status in input", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__update_task",
+        tool_input: { id: "task-1", status: "in_progress" },
+      });
+      expect(cmds[0].previous).toBeUndefined();
+    });
+
+    // ── link ──────────────────────────────────────────────────────────────
+
+    it("link returns emit command with task.linked payload", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { fromId: "task-a", toId: "task-b", type: "blocks" },
+      });
+      expect(cmds).toHaveLength(1);
+      expect(cmds[0].action).toBe("emit");
+      expect(cmds[0].event.type).toBe("task.linked");
+      expect(cmds[0].event.from).toBe("task-a");
+      expect(cmds[0].event.to).toBe("task-b");
+      expect(cmds[0].event.linkType).toBe("blocks");
+      expect(cmds[0].event.source).toBe("opentasks");
+    });
+
+    it("link defaults linkType to related and remove to false", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { fromId: "a", toId: "b" },
+      });
+      expect(cmds[0].event.linkType).toBe("related");
+      expect(cmds[0].event.remove).toBe(false);
+    });
+
+    it("link returns empty when fromId or toId is missing", () => {
+      expect(buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { fromId: "a" },
+      })).toHaveLength(0);
+      expect(buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__link",
+        tool_input: { toId: "b" },
+      })).toHaveLength(0);
+    });
+
+    // ── annotate ──────────────────────────────────────────────────────────
+
+    it("annotate returns emit command with task.sync payload", () => {
+      const cmds = buildOpentasksBridgeCommands({
         tool_name: "mcp__opentasks__annotate",
         tool_input: { target: "task://1", feedback: { type: "suggestion" } },
       });
-      expect(p.type).toBe("task.sync");
-      expect(p.uri).toBe("task://1");
-      expect(p.annotation).toBe("suggestion");
-      expect(p.source).toBe("opentasks");
+      expect(cmds).toHaveLength(1);
+      expect(cmds[0].action).toBe("emit");
+      expect(cmds[0].event.type).toBe("task.sync");
+      expect(cmds[0].event.uri).toBe("task://1");
+      expect(cmds[0].event.annotation).toBe("suggestion");
+      expect(cmds[0].event.source).toBe("opentasks");
     });
 
-    it("annotate tool defaults annotation to comment", () => {
-      const p = buildOpentasksSyncPayload({
+    it("annotate defaults annotation to comment", () => {
+      const cmds = buildOpentasksBridgeCommands({
         tool_name: "mcp__opentasks__annotate",
         tool_input: { target: "task://1" },
       });
-      expect(p.annotation).toBe("comment");
+      expect(cmds[0].event.annotation).toBe("comment");
     });
 
-    it("annotate tool returns null when target is missing", () => {
-      expect(buildOpentasksSyncPayload({
+    it("annotate returns empty when target is missing", () => {
+      expect(buildOpentasksBridgeCommands({
         tool_name: "mcp__opentasks__annotate",
         tool_input: {},
-      })).toBeNull();
+      })).toHaveLength(0);
     });
 
-    it("query tool returns null (read-only)", () => {
-      expect(buildOpentasksSyncPayload({
+    // ── read-only tools ──────────────────────────────────────────────────
+
+    it("query tool returns empty array (read-only)", () => {
+      expect(buildOpentasksBridgeCommands({
         tool_name: "mcp__opentasks__query",
         tool_input: { filter: "status:open" },
-      })).toBeNull();
+      })).toHaveLength(0);
     });
 
-    it("generic fallback with input.target returns task.sync", () => {
-      const p = buildOpentasksSyncPayload({
-        tool_name: "mcp__opentasks__update",
-        tool_input: { target: "task://x", status: "closed" },
-      });
-      expect(p.type).toBe("task.sync");
-      expect(p.uri).toBe("task://x");
-      expect(p.status).toBe("closed");
-      expect(p.source).toBe("opentasks");
-    });
-
-    it("generic fallback with input.id returns task.sync", () => {
-      const p = buildOpentasksSyncPayload({
-        tool_name: "mcp__opentasks__create",
-        tool_input: { id: "task://y" },
-      });
-      expect(p.type).toBe("task.sync");
-      expect(p.uri).toBe("task://y");
-    });
-
-    it("returns null when no syncable data present", () => {
-      expect(buildOpentasksSyncPayload({
-        tool_name: "mcp__opentasks__something",
+    it("list_tasks returns empty array (read-only)", () => {
+      expect(buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__list_tasks",
         tool_input: {},
-      })).toBeNull();
+      })).toHaveLength(0);
     });
 
-    it("returns null when hook data is empty", () => {
-      expect(buildOpentasksSyncPayload({})).toBeNull();
+    it("get_task returns empty array (read-only)", () => {
+      expect(buildOpentasksBridgeCommands({
+        tool_name: "mcp__opentasks__get_task",
+        tool_input: { id: "task-1" },
+      })).toHaveLength(0);
+    });
+
+    // ── edge cases ───────────────────────────────────────────────────────
+
+    it("returns empty array when hook data is empty", () => {
+      expect(buildOpentasksBridgeCommands({})).toHaveLength(0);
+    });
+
+    it("handles plugin-namespaced tool names", () => {
+      const cmds = buildOpentasksBridgeCommands({
+        tool_name: "mcp__plugin_claude-code-swarm_opentasks__create_task",
+        tool_input: { title: "Namespaced" },
+      });
+      expect(cmds).toHaveLength(1);
+      expect(cmds[0].action).toBe("bridge-task-created");
     });
   });
 });

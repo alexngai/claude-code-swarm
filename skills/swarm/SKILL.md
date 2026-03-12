@@ -107,3 +107,12 @@ When all work is complete:
 - If MAP is enabled in `.swarm/claude-swarm/config.json`, lifecycle events are handled automatically by hooks
 - Start with the most critical roles first — you don't need to spawn all roles from the topology at once
 - Keep team size manageable (3-5 agents) — spawn more only when genuinely needed
+
+## When opentasks is enabled
+
+If opentasks is configured (check init context for "Opentasks: connected"):
+- Use **opentasks MCP tools** instead of native `TaskCreate`/`TaskUpdate`/`TaskList`
+- `opentasks__create_task` to create tasks
+- `opentasks__update_task` to assign and update status
+- `opentasks__list_tasks` to check progress
+- Native task tools may be unavailable — opentasks provides richer task management (links, annotations, cross-provider queries)

@@ -4,5 +4,14 @@
   "version": "0.3.4",
   "author": {
     "name": "alexngai"
+  },
+  "mcpServers": {
+    "opentasks": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/run-opentasks-mcp.sh",
+      "args": [],
+      "env": {
+        "OPENTASKS_WORKING_DIR": "${workspaceFolder}"
+      }
+    }
   }
 }

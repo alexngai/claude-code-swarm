@@ -86,6 +86,7 @@ export function rpcRequest(method, params = {}, socketPath, timeoutMs = 2000) {
         try {
           const response = JSON.parse(line);
           if (response.id === id) {
+            clearTimeout(timer);
             client.destroy();
             if (response.error) {
               resolve(null);
@@ -100,12 +101,17 @@ export function rpcRequest(method, params = {}, socketPath, timeoutMs = 2000) {
       }
     });
 
-    client.on("error", () => resolve(null));
+    client.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       client.destroy();
       resolve(null);
     }, timeoutMs);
+    // Don't let this timer keep the hook process alive after response
+    timer.unref();
   });
 }
 
@@ -161,6 +167,34 @@ export async function ensureDaemon(config) {
 }
 
 /**
+ * Create a task in the opentasks graph.
+ * Returns the created node or null on failure.
+ *
+ * @param {string} socketPath - Daemon socket path
+ * @param {object} params - { type, title, status, assignee?, metadata? }
+ * @returns {Promise<object|null>}
+ */
+export async function createTask(socketPath, params) {
+  return rpcRequest("graph.create", {
+    type: "task",
+    ...params,
+  }, socketPath);
+}
+
+/**
+ * Update a task in the opentasks graph.
+ * Returns the updated node or null on failure.
+ *
+ * @param {string} socketPath - Daemon socket path
+ * @param {string} id - Node ID
+ * @param {object} updates - { status?, title?, assignee?, metadata? }
+ * @returns {Promise<object|null>}
+ */
+export async function updateTask(socketPath, id, updates) {
+  return rpcRequest("graph.update", { id, ...updates }, socketPath);
+}
+
+/**
  * Forward a MAP task sync event to the opentasks graph.
  * Translates MAP task.* event payloads into opentasks graph operations.
  * Best-effort: returns true on success, false on failure. Never throws.
@@ -173,28 +207,32 @@ export async function pushSyncEvent(socketPath, evt) {
   try {
     switch (evt.type) {
       case "task.sync": {
-        const result = await rpcRequest("graph.update", {
-          uri: evt.uri,
-          status: evt.status,
-          title: evt.subject,
-          metadata: { source: evt.source, syncedAt: new Date().toISOString() },
-        }, socketPath);
-        // If update fails (node doesn't exist), try creating
-        if (result === null && evt.uri) {
-          await rpcRequest("graph.create", {
-            type: "task",
-            uri: evt.uri,
-            title: evt.subject || "",
-            status: evt.status || "open",
+        // Try to find and update existing node by querying for it
+        // If we have an ID, update directly; otherwise create
+        if (evt.id) {
+          const result = await rpcRequest("graph.update", {
+            id: evt.id,
+            status: evt.status,
+            title: evt.subject,
             metadata: { source: evt.source, syncedAt: new Date().toISOString() },
           }, socketPath);
+          if (result !== null) return true;
         }
+        // Create new node
+        await rpcRequest("graph.create", {
+          type: "task",
+          uri: evt.uri,
+          title: evt.subject || "",
+          status: evt.status || "open",
+          metadata: { source: evt.source, syncedAt: new Date().toISOString() },
+        }, socketPath);
         return true;
       }
 
       case "task.claimed": {
+        if (!evt.id) return false;
         await rpcRequest("graph.update", {
-          uri: evt.uri,
+          id: evt.id,
           status: "in_progress",
           assignee: evt.agent,
           metadata: { source: evt.source, claimedAt: new Date().toISOString() },
@@ -203,8 +241,9 @@ export async function pushSyncEvent(socketPath, evt) {
       }
 
       case "task.unblocked": {
+        if (!evt.id) return false;
         await rpcRequest("graph.update", {
-          uri: evt.uri,
+          id: evt.id,
           status: "open",
           metadata: { unblockedBy: evt.unblockedBy, source: evt.source },
         }, socketPath);
@@ -213,8 +252,8 @@ export async function pushSyncEvent(socketPath, evt) {
 
       case "task.linked": {
         await rpcRequest("tools.link", {
-          from: evt.from,
-          to: evt.to,
+          fromId: evt.from,
+          toId: evt.to,
           type: evt.linkType || "related",
           metadata: { source: evt.source },
         }, socketPath);

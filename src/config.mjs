@@ -82,6 +82,7 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
     opentasks: {
       enabled: envBool("SWARM_OPENTASKS_ENABLED") ?? Boolean(project.opentasks?.enabled ?? global.opentasks?.enabled),
       autoStart: envBool("SWARM_OPENTASKS_AUTOSTART") ?? (project.opentasks?.autoStart ?? global.opentasks?.autoStart) !== false,
+      scope: envStr("SWARM_OPENTASKS_SCOPE") ?? project.opentasks?.scope ?? global.opentasks?.scope ?? "tasks",
     },
     inbox: {
       enabled: envBool("SWARM_INBOX_ENABLED") ?? project.inbox?.enabled ?? global.inbox?.enabled ?? mapEnabled,

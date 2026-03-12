@@ -75,11 +75,11 @@ describe("index", () => {
   it("exports buildSubagentSpawnCommand", () => expect(typeof index.buildSubagentSpawnCommand).toBe("function"));
   it("exports buildSubagentDoneCommand", () => expect(typeof index.buildSubagentDoneCommand).toBe("function"));
   it("exports buildStateCommand", () => expect(typeof index.buildStateCommand).toBe("function"));
-  it("exports buildTaskDispatchedPayload", () => expect(typeof index.buildTaskDispatchedPayload).toBe("function"));
-  it("exports buildTaskCompletedPayload", () => expect(typeof index.buildTaskCompletedPayload).toBe("function"));
-  it("exports buildTaskStatusPayload", () => expect(typeof index.buildTaskStatusPayload).toBe("function"));
+  it("exports handleTaskCreated", () => expect(typeof index.handleTaskCreated).toBe("function"));
+  it("exports handleTaskCompleted", () => expect(typeof index.handleTaskCompleted).toBe("function"));
+  it("exports handleTaskStatusCompleted", () => expect(typeof index.handleTaskStatusCompleted).toBe("function"));
   it("exports buildTaskSyncPayload", () => expect(typeof index.buildTaskSyncPayload).toBe("function"));
-  it("exports buildOpentasksSyncPayload", () => expect(typeof index.buildOpentasksSyncPayload).toBe("function"));
+  it("exports buildOpentasksBridgeCommands", () => expect(typeof index.buildOpentasksBridgeCommands).toBe("function"));
 
   // Sessionlog exports
   it("exports checkSessionlogStatus", () => expect(typeof index.checkSessionlogStatus).toBe("function"));

@@ -247,6 +247,130 @@ describe("sidecar-server", () => {
       });
     });
 
+    // ── Task event bridge (opentasks → MAP) ─────────────────────────────
+
+    describe("bridge-task-created", () => {
+      it("sends task.created event via conn.send with broadcast", async () => {
+        await handler({
+          action: "bridge-task-created",
+          task: { id: "task-1", title: "Fix bug", status: "open", assignee: "worker-1" },
+          agentId: "worker-1",
+        }, mockClient);
+        expect(mockConnection.send).toHaveBeenCalledWith(
+          { scope: "swarm:test" },
+          { type: "task.created", task: { id: "task-1", title: "Fix bug", status: "open", assignee: "worker-1" }, _origin: "worker-1" },
+          { relationship: "broadcast" }
+        );
+      });
+
+      it("responds {ok: true} even without connection", async () => {
+        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents);
+        await nullHandler({
+          action: "bridge-task-created",
+          task: { id: "t-1" },
+        }, mockClient);
+        const written = JSON.parse(mockClient.write.mock.calls[0][0]);
+        expect(written.ok).toBe(true);
+      });
+
+      it("defaults _origin to 'opentasks' when agentId missing", async () => {
+        await handler({
+          action: "bridge-task-created",
+          task: { id: "t-1" },
+        }, mockClient);
+        const [, payload] = mockConnection.send.mock.calls[0];
+        expect(payload._origin).toBe("opentasks");
+      });
+    });
+
+    describe("bridge-task-status", () => {
+      it("sends task.status event via conn.send", async () => {
+        await handler({
+          action: "bridge-task-status",
+          taskId: "task-1",
+          previous: "open",
+          current: "in_progress",
+          agentId: "worker-1",
+        }, mockClient);
+        expect(mockConnection.send).toHaveBeenCalledWith(
+          { scope: "swarm:test" },
+          { type: "task.status", taskId: "task-1", previous: "open", current: "in_progress", _origin: "worker-1" },
+          { relationship: "broadcast" }
+        );
+      });
+
+      it("also sends task.completed for terminal state 'completed'", async () => {
+        await handler({
+          action: "bridge-task-status",
+          taskId: "task-1",
+          previous: "open",
+          current: "completed",
+          agentId: "worker-1",
+        }, mockClient);
+        expect(mockConnection.send).toHaveBeenCalledTimes(2);
+        const [, secondPayload] = mockConnection.send.mock.calls[1];
+        expect(secondPayload.type).toBe("task.completed");
+        expect(secondPayload.taskId).toBe("task-1");
+      });
+
+      it("also sends task.completed for terminal state 'closed'", async () => {
+        await handler({
+          action: "bridge-task-status",
+          taskId: "task-1",
+          current: "closed",
+        }, mockClient);
+        expect(mockConnection.send).toHaveBeenCalledTimes(2);
+        const [, secondPayload] = mockConnection.send.mock.calls[1];
+        expect(secondPayload.type).toBe("task.completed");
+      });
+
+      it("does not send task.completed for non-terminal states", async () => {
+        await handler({
+          action: "bridge-task-status",
+          taskId: "task-1",
+          current: "in_progress",
+        }, mockClient);
+        expect(mockConnection.send).toHaveBeenCalledTimes(1);
+      });
+
+      it("responds {ok: true}", async () => {
+        await handler({
+          action: "bridge-task-status",
+          taskId: "task-1",
+          current: "completed",
+        }, mockClient);
+        const written = JSON.parse(mockClient.write.mock.calls[0][0]);
+        expect(written.ok).toBe(true);
+      });
+    });
+
+    describe("bridge-task-assigned", () => {
+      it("sends task.assigned event via conn.send", async () => {
+        await handler({
+          action: "bridge-task-assigned",
+          taskId: "task-1",
+          assignee: "gsd-executor",
+          agentId: "gsd-executor",
+        }, mockClient);
+        expect(mockConnection.send).toHaveBeenCalledWith(
+          { scope: "swarm:test" },
+          { type: "task.assigned", taskId: "task-1", agentId: "gsd-executor", _origin: "gsd-executor" },
+          { relationship: "broadcast" }
+        );
+      });
+
+      it("responds {ok: true} without connection", async () => {
+        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents);
+        await nullHandler({
+          action: "bridge-task-assigned",
+          taskId: "t-1",
+          assignee: "worker",
+        }, mockClient);
+        const written = JSON.parse(mockClient.write.mock.calls[0][0]);
+        expect(written.ok).toBe(true);
+      });
+    });
+
     // ── State ─────────────────────────────────────────────────────────────
 
     describe("state", () => {

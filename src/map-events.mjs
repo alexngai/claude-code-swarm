@@ -1,18 +1,19 @@
 /**
  * map-events.mjs — Sidecar command builders and message payload builders
  *
- * Produces two kinds of objects:
+ * Produces three kinds of objects:
  * 1. Sidecar commands — { action: "spawn"|"done"|"state", ... }
  *    These use MAP SDK primitives (conn.spawn, conn.done, conn.updateState).
  *    The server auto-emits agent_registered, agent_state_changed, etc.
  *
- * 2. Message payloads — { type: "task.dispatched"|"task.completed"|"task.sync"|..., ... }
- *    These are sent via conn.send() as regular MAP messages.
- *    Observers see standard message_sent events.
+ * 2. Bridge commands — { action: "bridge-task-created"|"bridge-task-status"|..., ... }
+ *    These emit task events via the opentasks MAP event bridge pattern.
+ *    The sidecar sends typed messages over the shared MAP connection.
+ *    Task data lives in the opentasks daemon; these are observability events.
  *
- * 3. Task sync payloads — { type: "task.sync"|"task.claimed"|"task.linked", ... }
- *    Used for bridging Claude tasks and opentasks MCP operations to MAP.
- *    Extends the existing task lifecycle payloads with richer sync semantics.
+ * 3. Message payloads — { type: "task.sync"|"task.linked"|..., ... }
+ *    These are sent via conn.send() for opentasks bridge events that don't
+ *    map to task lifecycle.
  *
  * No custom swarm.* event types.
  */
@@ -25,8 +26,9 @@ import { sessionPaths } from "./paths.mjs";
 
 /**
  * Send a sidecar command: try sidecar, fall back to fire-and-forget.
- * For "spawn" and "done" commands, the fire-and-forget path can't use SDK
- * primitives (ephemeral connection), so they are silently dropped.
+ * For "emit" commands, falls back to fire-and-forget direct connection.
+ * For SDK-primitive and bridge commands (spawn, done, state, bridge-*),
+ * the sidecar is required — silently dropped if unavailable.
  * When sessionId is provided, uses per-session sidecar paths.
  */
 export async function sendCommand(config, command, sessionId) {
@@ -40,7 +42,7 @@ export async function sendCommand(config, command, sessionId) {
       // Only message payloads can be fire-and-forget sent
       await fireAndForget(config, command.event);
     }
-    // spawn/done/state commands require the sidecar — silently drop if unavailable
+    // spawn/done/state/task-* commands require the sidecar — silently drop if unavailable
   }
 }
 
@@ -155,54 +157,137 @@ export function buildStateCommand(agentId, state, metadata) {
   return cmd;
 }
 
-// ── Task lifecycle payloads (sent as MAP messages) ────────────────────────────
+// ── Task lifecycle (opentasks daemon + MAP event bridge) ───────────────────────
+//
+// Two-step pattern:
+// 1. Create/update the task in opentasks daemon via IPC (graph.create/graph.update)
+// 2. Emit the event via sidecar bridge command (bridge-task-created/bridge-task-status)
+//
+// This decouples task storage (opentasks) from observability (MAP).
 
 /**
- * Build a task.dispatched message payload.
- * Sent via conn.send() → observers see message_sent event.
+ * Create a task in opentasks and emit bridge event.
+ * Called from hook handlers after agent spawning.
+ *
+ * @param {object} config - Plugin config
+ * @param {object} hookData - Hook stdin data
+ * @param {string} teamName - Team name
+ * @param {string} matchedRole - Matched role name
+ * @param {string} agentName - Agent name
+ * @param {string|null} sessionId - Session ID for per-session routing
  */
-export function buildTaskDispatchedPayload(hookData, teamName, matchedRole, agentName) {
+export async function handleTaskCreated(config, hookData, teamName, matchedRole, agentName, sessionId) {
+  const { createTask, findSocketPath } = await import("./opentasks-client.mjs");
+
   const prompt =
     hookData.tool_input?.prompt || hookData.tool_input?.description || "";
-  const agentId = buildAgentId(agentName, matchedRole, hookData);
-  return {
-    type: "task.dispatched",
-    taskId: hookData.tool_use_id || "",
-    from: `${hookData.session_id || teamName}-sidecar`,
-    targetAgent: agentId,
-    targetRole: matchedRole || "internal",
-    description: prompt.substring(0, 300),
-  };
+  const assignee = matchedRole ? `${teamName}-${matchedRole}` : agentName;
+
+  // 1. Create task in opentasks daemon
+  const otSocketPath = findSocketPath();
+  const node = await createTask(otSocketPath, {
+    title: prompt.substring(0, 300),
+    status: "open",
+    content: prompt,
+    assignee,
+    metadata: {
+      source: "claude-code-swarm",
+      teamName,
+      role: matchedRole || "internal",
+      toolUseId: hookData.tool_use_id || undefined,
+    },
+  });
+
+  const taskId = node?.id || hookData.tool_use_id || "";
+
+  // 2. Emit bridge event via sidecar (MAP observability)
+  await sendCommand(config, {
+    action: "bridge-task-created",
+    task: {
+      id: taskId,
+      title: prompt.substring(0, 300),
+      status: "open",
+      assignee,
+    },
+    agentId: assignee,
+  }, sessionId);
+
+  // 3. Emit assignment event
+  if (assignee) {
+    await sendCommand(config, {
+      action: "bridge-task-assigned",
+      taskId,
+      assignee,
+      agentId: assignee,
+    }, sessionId);
+  }
 }
 
 /**
- * Build a task.completed message payload.
+ * Mark a task completed in opentasks and emit bridge event.
+ * Called from hook handlers after agent completion.
  */
-export function buildTaskCompletedPayload(hookData, teamName, matchedRole, agentName) {
-  const agentId = buildAgentId(agentName, matchedRole, hookData);
-  return {
-    type: "task.completed",
-    taskId: hookData.tool_use_id || "",
-    agent: agentId,
-    status: "completed",
-  };
+export async function handleTaskCompleted(config, hookData, teamName, matchedRole, agentName, sessionId) {
+  const { updateTask, findSocketPath } = await import("./opentasks-client.mjs");
+
+  const assignee = matchedRole ? `${teamName}-${matchedRole}` : agentName;
+  const taskId = hookData.tool_use_id || hookData.task_id || "";
+
+  // 1. Update task in opentasks daemon
+  if (taskId) {
+    const otSocketPath = findSocketPath();
+    await updateTask(otSocketPath, taskId, {
+      status: "closed",
+      metadata: {
+        completedBy: assignee,
+        source: "claude-code-swarm",
+      },
+    });
+  }
+
+  // 2. Emit bridge event via sidecar (MAP observability)
+  await sendCommand(config, {
+    action: "bridge-task-status",
+    taskId,
+    previous: "open",
+    current: "completed",
+    agentId: assignee,
+  }, sessionId);
 }
 
 /**
- * Build a task.completed message payload from TaskCompleted hook data.
+ * Handle TaskCompleted hook — richer metadata from Claude's task system.
  */
-export function buildTaskStatusPayload(hookData, teamName, matchedRole) {
-  return {
-    type: "task.completed",
-    taskId: hookData.task_id || "",
-    taskSubject: hookData.task_subject || "",
-    taskDescription: (hookData.task_description || "").substring(0, 300),
-    agent: hookData.teammate_name || "",
-    teamName: hookData.team_name || teamName,
-    role: matchedRole || "unknown",
-    isTeamRole: !!matchedRole,
-    status: "completed",
-  };
+export async function handleTaskStatusCompleted(config, hookData, teamName, matchedRole, sessionId) {
+  const { updateTask, findSocketPath } = await import("./opentasks-client.mjs");
+
+  const agentId = hookData.teammate_name || "";
+  const taskId = hookData.task_id || "";
+
+  // 1. Update task in opentasks daemon
+  if (taskId) {
+    const otSocketPath = findSocketPath();
+    await updateTask(otSocketPath, taskId, {
+      status: "closed",
+      title: hookData.task_subject || undefined,
+      metadata: {
+        completedBy: agentId,
+        teamName: hookData.team_name || teamName,
+        role: matchedRole || "unknown",
+        isTeamRole: !!matchedRole,
+        source: "claude-code-swarm",
+      },
+    });
+  }
+
+  // 2. Emit bridge event via sidecar (MAP observability)
+  await sendCommand(config, {
+    action: "bridge-task-status",
+    taskId,
+    previous: "in_progress",
+    current: "completed",
+    agentId,
+  }, sessionId);
 }
 
 // ── Task sync payloads (opentasks ↔ MAP bridge) ─────────────────────────────
@@ -211,7 +296,7 @@ export function buildTaskStatusPayload(hookData, teamName, matchedRole) {
  * Map Claude task status to canonical status for sync payloads.
  */
 function mapClaudeStatus(status) {
-  const map = { pending: "open", in_progress: "in_progress", completed: "closed" };
+  const map = { pending: "open", in_progress: "in_progress", completed: "completed" };
   return map[status] || status || "open";
 }
 
@@ -230,54 +315,182 @@ export function buildTaskSyncPayload(hookData, teamName) {
 }
 
 /**
- * Build a task sync payload from opentasks MCP tool use.
- * Translates opentasks MCP tool input/output into MAP sync events.
- *
- * @param {object} hookData - PostToolUse hook data with tool_name, tool_input, tool_output
- * @returns {object|null} MAP payload or null if not a syncable operation
+ * Parse tool_output from PostToolUse hook data.
+ * MCP tools return JSON-stringified results in content[0].text or as a raw string.
+ * Returns parsed object or null.
  */
-export function buildOpentasksSyncPayload(hookData) {
-  const input = hookData.tool_input || {};
-  const toolName = hookData.tool_name || "";
-
-  // link tool → task.linked
-  if (toolName.includes("link")) {
-    if (!input.from || !input.to) return null;
-    return {
-      type: "task.linked",
-      from: input.from,
-      to: input.to,
-      linkType: input.type || "related",
-      remove: input.remove || false,
-      source: "opentasks",
-    };
-  }
-
-  // annotate tool → task.sync with annotation info
-  if (toolName.includes("annotate")) {
-    if (!input.target) return null;
-    return {
-      type: "task.sync",
-      uri: input.target,
-      annotation: input.feedback?.type || "comment",
-      source: "opentasks",
-    };
-  }
-
-  // query tool → read-only, no sync needed
-  if (toolName.includes("query")) {
+function parseToolOutput(hookData) {
+  const raw = hookData.tool_output;
+  if (!raw) return null;
+  try {
+    // tool_output may be a string or already parsed
+    const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+    // MCP tools wrap output in { content: [{ text: "..." }] }
+    if (data?.content?.[0]?.text) {
+      return JSON.parse(data.content[0].text);
+    }
+    return data;
+  } catch {
     return null;
   }
+}
 
-  // Generic fallback for other opentasks operations
-  if (input.target || input.id) {
-    return {
-      type: "task.sync",
-      uri: input.target || input.id,
-      status: input.status,
-      source: "opentasks",
-    };
+/**
+ * Build bridge commands from opentasks MCP tool use.
+ * Translates opentasks MCP tool input/output into sidecar bridge commands.
+ * Uses tool_output for created/updated task data (IDs, status, etc.).
+ *
+ * @param {object} hookData - PostToolUse hook data with tool_name, tool_input, tool_output
+ * @returns {object[]}} Array of bridge commands to send via sendCommand
+ */
+export function buildOpentasksBridgeCommands(hookData) {
+  const input = hookData.tool_input || {};
+  const output = parseToolOutput(hookData);
+  const toolName = hookData.tool_name || "";
+  const commands = [];
+
+  // create_task → bridge-task-created + bridge-task-assigned
+  if (toolName.includes("create_task")) {
+    const taskId = output?.id || "";
+    const title = output?.title || input.title || "";
+    const status = output?.status || input.status || "open";
+    const assignee = output?.assignee || input.assignee || "";
+    if (!taskId && !title) return commands;
+
+    commands.push({
+      action: "bridge-task-created",
+      task: { id: taskId, title, status, assignee },
+      agentId: assignee || "opentasks",
+    });
+
+    if (assignee) {
+      commands.push({
+        action: "bridge-task-assigned",
+        taskId,
+        assignee,
+        agentId: assignee,
+      });
+    }
+    return commands;
   }
 
-  return null;
+  // update_task → bridge-task-status
+  if (toolName.includes("update_task")) {
+    const taskId = output?.id || input.id || "";
+    if (!taskId) return commands;
+
+    const previousStatus = input.status ? undefined : "open"; // unknown if explicit status set
+    const currentStatus = output?.status || input.status || input.transition || "";
+    if (currentStatus) {
+      commands.push({
+        action: "bridge-task-status",
+        taskId,
+        previous: previousStatus,
+        current: currentStatus,
+        agentId: output?.assignee || input.assignee || "opentasks",
+      });
+    }
+    return commands;
+  }
+
+  // link → task.linked payload (emitted as message, not bridge command)
+  if (toolName.includes("link")) {
+    if (!input.fromId || !input.toId) return commands;
+    commands.push({
+      action: "emit",
+      event: {
+        type: "task.linked",
+        from: input.fromId,
+        to: input.toId,
+        linkType: input.type || "related",
+        remove: input.remove || false,
+        source: "opentasks",
+      },
+    });
+    return commands;
+  }
+
+  // annotate → task.sync payload (emitted as message)
+  if (toolName.includes("annotate")) {
+    const target = input.target || output?.target || "";
+    if (!target) return commands;
+    commands.push({
+      action: "emit",
+      event: {
+        type: "task.sync",
+        uri: target,
+        annotation: input.feedback?.type || input.type || "comment",
+        source: "opentasks",
+      },
+    });
+    return commands;
+  }
+
+  // get_task, list_tasks, query, list_providers → read-only, no sync needed
+  return commands;
+}
+
+// ── Native task hook handlers ─────────────────────────────────────────────────
+//
+// Extracted from map-hook.mjs so they can be tested directly with real sidecar
+// sockets. These handle PostToolUse hooks for Claude's native TaskCreate/TaskUpdate.
+
+/**
+ * Map Claude native task status to canonical status.
+ */
+export function mapNativeTaskStatus(status) {
+  const map = { pending: "open", in_progress: "in_progress", completed: "completed" };
+  return map[status] || status || "open";
+}
+
+/**
+ * Handle native TaskCreate hook data → emit bridge events via sidecar.
+ * Extracted from map-hook.mjs handleNativeTaskCreated() for testability.
+ *
+ * @param {object} config - Plugin config (needs config.map.enabled)
+ * @param {object} hookData - Hook stdin data with tool_input, tool_output
+ * @param {string|null} sessionId - Session ID for per-session routing
+ */
+export async function handleNativeTaskCreatedEvent(config, hookData, sessionId) {
+  const taskId = hookData.tool_output?.id || hookData.tool_input?.id || "";
+  const subject = hookData.tool_input?.subject || hookData.tool_output?.subject || "";
+  const status = mapNativeTaskStatus(hookData.tool_output?.status || hookData.tool_input?.status || "pending");
+  const owner = hookData.tool_input?.owner || hookData.tool_output?.owner || "";
+
+  await sendCommand(config, {
+    action: "bridge-task-created",
+    task: { id: taskId, title: subject, status, assignee: owner },
+    agentId: owner || hookData.session_id || "native",
+  }, sessionId);
+
+  if (owner) {
+    await sendCommand(config, {
+      action: "bridge-task-assigned",
+      taskId,
+      assignee: owner,
+      agentId: owner,
+    }, sessionId);
+  }
+}
+
+/**
+ * Handle native TaskUpdate hook data → emit bridge events via sidecar.
+ * Extracted from map-hook.mjs handleNativeTaskUpdated() for testability.
+ *
+ * @param {object} config - Plugin config (needs config.map.enabled)
+ * @param {object} hookData - Hook stdin data with tool_input, tool_output
+ * @param {string|null} sessionId - Session ID for per-session routing
+ */
+export async function handleNativeTaskUpdatedEvent(config, hookData, sessionId) {
+  const taskId = hookData.tool_input?.taskId || hookData.tool_input?.id || "";
+  const newStatus = hookData.tool_input?.status || hookData.tool_output?.status || "";
+
+  if (taskId && newStatus) {
+    await sendCommand(config, {
+      action: "bridge-task-status",
+      taskId,
+      current: mapNativeTaskStatus(newStatus),
+      agentId: hookData.session_id || "native",
+    }, sessionId);
+  }
 }

@@ -69,8 +69,9 @@ export function createSocketServer(socketPath, onCommand) {
  *
  * Uses MAP SDK primitives: conn.spawn() for agent registration (server
  * auto-emits agent_registered), conn.updateState() for state changes
- * (server auto-emits agent_state_changed), and conn.send() only for
- * typed message payloads (task lifecycle). No custom swarm.* event types.
+ * (server auto-emits agent_state_changed), and conn.send() for message
+ * payloads. Task events are emitted via the opentasks MAP event bridge
+ * (bridge-* commands), which shares the same MAP connection.
  *
  * @param {object|null} connection - MAP AgentConnection (or null if disconnected)
  * @param {string} scope - MAP scope name
@@ -181,6 +182,64 @@ export function createCommandHandler(connection, scope, registeredAgents) {
           } else {
             respond(client, { ok: false, error: "no connection" });
           }
+          break;
+        }
+
+        // --- Task event bridge (opentasks → MAP) ---
+        // These emit task events over the shared MAP connection using
+        // the opentasks event bridge pattern. The actual task data lives
+        // in the opentasks daemon; these just emit observability events.
+
+        case "bridge-task-created": {
+          if (conn) {
+            try {
+              await conn.send({ scope }, {
+                type: "task.created",
+                task: command.task,
+                _origin: command.agentId || "opentasks",
+              }, { relationship: "broadcast" });
+            } catch { /* best effort */ }
+          }
+          respond(client, { ok: true });
+          break;
+        }
+
+        case "bridge-task-status": {
+          if (conn) {
+            try {
+              await conn.send({ scope }, {
+                type: "task.status",
+                taskId: command.taskId,
+                previous: command.previous || "open",
+                current: command.current,
+                _origin: command.agentId || "opentasks",
+              }, { relationship: "broadcast" });
+              // Also emit task.completed for terminal states
+              if (command.current === "completed" || command.current === "closed") {
+                await conn.send({ scope }, {
+                  type: "task.completed",
+                  taskId: command.taskId,
+                  _origin: command.agentId || "opentasks",
+                }, { relationship: "broadcast" });
+              }
+            } catch { /* best effort */ }
+          }
+          respond(client, { ok: true });
+          break;
+        }
+
+        case "bridge-task-assigned": {
+          if (conn) {
+            try {
+              await conn.send({ scope }, {
+                type: "task.assigned",
+                taskId: command.taskId,
+                agentId: command.assignee,
+                _origin: command.agentId || "opentasks",
+              }, { relationship: "broadcast" });
+            } catch { /* best effort */ }
+          }
+          respond(client, { ok: true });
           break;
         }
 

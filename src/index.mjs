@@ -60,16 +60,20 @@ export { createSocketServer, createCommandHandler, respond } from "./sidecar-ser
 export {
   sendCommand,
   emitPayload,
+  buildAgentId,
   buildSpawnCommand,
   buildDoneCommand,
   buildSubagentSpawnCommand,
   buildSubagentDoneCommand,
   buildStateCommand,
-  buildTaskDispatchedPayload,
-  buildTaskCompletedPayload,
-  buildTaskStatusPayload,
+  handleTaskCreated,
+  handleTaskCompleted,
+  handleTaskStatusCompleted,
   buildTaskSyncPayload,
-  buildOpentasksSyncPayload,
+  buildOpentasksBridgeCommands,
+  mapNativeTaskStatus,
+  handleNativeTaskCreatedEvent,
+  handleNativeTaskUpdatedEvent,
 } from "./map-events.mjs";
 
 // Sessionlog

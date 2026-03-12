@@ -45,20 +45,23 @@ export function parseBasicYaml(content) {
 /**
  * Determine which tools an agent needs based on role name, manifest, and position.
  */
-export function determineTools(roleName, manifest, position) {
+export function determineTools(roleName, manifest, position, options = {}) {
   const tools = ["Read", "Glob", "Grep", "Bash"];
 
-  // All team agents get native team coordination tools
-  tools.push("TaskList", "TaskUpdate", "SendMessage");
-
-  // Root and companions get full tool access + task creation
-  // Note: Agent tool is NOT granted — only the main agent (team lead) can spawn teammates.
-  // This is a Claude Code limitation: teammates cannot spawn other teammates.
-  if (position === "root" || position === "companion") {
-    tools.push("Write", "Edit", "TaskCreate");
+  if (options.opentasksEnabled) {
+    tools.push("SendMessage");
+  } else {
+    tools.push("TaskList", "TaskUpdate", "SendMessage");
+    if (position === "root" || position === "companion") {
+      tools.push("TaskCreate");
+    }
   }
 
-  // Roles that sound like they write code get write tools
+  if (position === "root" || position === "companion") {
+    tools.push("Write", "Edit");
+  }
+
+  // Keep existing writeRoles logic for code-writing roles
   const writeRoles = [
     "executor",
     "developer",
@@ -85,6 +88,7 @@ export function generateAgentMd({
   tools,
   skillContent,
   manifest,
+  opentasksEnabled,
 }) {
   const lines = [];
 
@@ -173,26 +177,48 @@ export function generateAgentMd({
     lines.push("");
   }
 
-  // Task management via native tools
-  lines.push("### Task Management");
-  lines.push("");
-  lines.push("Use Claude Code's native task tools:");
-  lines.push(
-    "- **TaskList** — check available tasks and their status"
-  );
-  lines.push(
-    "- **TaskUpdate** — claim tasks (set owner to your name), update status to in_progress or completed"
-  );
-  if (position === "root" || position === "companion") {
+  // Task management section
+  if (opentasksEnabled) {
+    lines.push("### Task Management (via opentasks)");
+    lines.push("");
+    lines.push("Use **opentasks MCP tools** for all task management:");
     lines.push(
-      "- **TaskCreate** — create new tasks for the team when you identify additional work"
+      "- **opentasks__list_tasks** — check available tasks and their status"
     );
+    lines.push(
+      "- **opentasks__update_task** — claim tasks (set assignee to your name), update status"
+    );
+    if (position === "root" || position === "companion") {
+      lines.push(
+        "- **opentasks__create_task** — create new tasks for the team when you identify additional work"
+      );
+    }
+    lines.push("");
+    lines.push(
+      "After completing a task, mark it completed via opentasks__update_task, then check opentasks__list_tasks for your next assignment."
+    );
+    lines.push("");
+  } else {
+    lines.push("### Task Management");
+    lines.push("");
+    lines.push("Use Claude Code's native task tools:");
+    lines.push(
+      "- **TaskList** — check available tasks and their status"
+    );
+    lines.push(
+      "- **TaskUpdate** — claim tasks (set owner to your name), update status to in_progress or completed"
+    );
+    if (position === "root" || position === "companion") {
+      lines.push(
+        "- **TaskCreate** — create new tasks for the team when you identify additional work"
+      );
+    }
+    lines.push("");
+    lines.push(
+      "After completing a task, mark it completed with TaskUpdate, then check TaskList for your next assignment."
+    );
+    lines.push("");
   }
-  lines.push("");
-  lines.push(
-    "After completing a task, mark it completed with TaskUpdate, then check TaskList for your next assignment."
-  );
-  lines.push("");
 
   // Optional MAP note
   lines.push("### External Observability (MAP)");
@@ -212,7 +238,7 @@ export function generateAgentMd({
  * Uses openteams TemplateLoader when available, falls back to basic YAML parsing.
  * Returns { success, roles: string[], error? }.
  */
-export async function generateAllAgents(templateDir, outputDir) {
+export async function generateAllAgents(templateDir, outputDir, options = {}) {
   const absTemplateDir = path.resolve(templateDir);
   const absOutputDir = path.resolve(outputDir);
 
@@ -261,7 +287,7 @@ export async function generateAllAgents(templateDir, outputDir) {
         model = comp?.config?.model;
       }
 
-      const tools = determineTools(roleName, manifest, position);
+      const tools = determineTools(roleName, manifest, position, options);
 
       const agentMd = generateAgentMd({
         roleName,
@@ -272,6 +298,7 @@ export async function generateAllAgents(templateDir, outputDir) {
         tools,
         skillContent: roleSkill.content,
         manifest,
+        opentasksEnabled: options.opentasksEnabled,
       });
 
       const agentDir = path.join(absOutputDir, roleName);
@@ -302,12 +329,20 @@ export async function generateAllAgents(templateDir, outputDir) {
         prompt = fs.readFileSync(promptFile, "utf-8");
       }
 
+      const fallbackTools = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent"];
+      if (options.opentasksEnabled) {
+        fallbackTools.push("SendMessage");
+      } else {
+        fallbackTools.push("TaskList", "TaskUpdate", "TaskCreate", "SendMessage");
+      }
+
       const agentMd = generateAgentMd({
         roleName,
         teamName: manifest.name,
         position: "spawned",
         description: `${roleName} agent in the ${manifest.name} team`,
-        tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "TaskList", "TaskUpdate", "TaskCreate", "SendMessage"],
+        tools: fallbackTools,
+        opentasksEnabled: options.opentasksEnabled,
         skillContent: prompt
           ? `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.\n\n## Instructions\n\n${prompt}`
           : `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.`,
