@@ -70,8 +70,6 @@ describe("index", () => {
   // MAP events exports — sidecar commands and message payloads
   it("exports sendCommand", () => expect(typeof index.sendCommand).toBe("function"));
   it("exports emitPayload", () => expect(typeof index.emitPayload).toBe("function"));
-  it("exports buildSpawnCommand", () => expect(typeof index.buildSpawnCommand).toBe("function"));
-  it("exports buildDoneCommand", () => expect(typeof index.buildDoneCommand).toBe("function"));
   it("exports buildSubagentSpawnCommand", () => expect(typeof index.buildSubagentSpawnCommand).toBe("function"));
   it("exports buildSubagentDoneCommand", () => expect(typeof index.buildSubagentDoneCommand).toBe("function"));
   it("exports buildStateCommand", () => expect(typeof index.buildStateCommand).toBe("function"));

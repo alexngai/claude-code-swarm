@@ -12,8 +12,6 @@
  *
  * Actions:
  *   inject              — Read inbox, format as markdown, forward task.* to opentasks, output to stdout
- *   agent-spawning      — Spawn agent in MAP + create task in opentasks + emit bridge event
- *   agent-completed     — Done agent in MAP + complete task in opentasks + emit bridge event
  *   turn-completed      — Update sidecar state to idle
  *   sessionlog-sync     — Sync sessionlog state to MAP
  *   subagent-start      — Spawn subagent in MAP
@@ -34,8 +32,6 @@ import { sessionPaths } from "../src/paths.mjs";
 import {
   sendCommand,
   emitPayload,
-  buildSpawnCommand,
-  buildDoneCommand,
   buildSubagentSpawnCommand,
   buildSubagentDoneCommand,
   buildStateCommand,
@@ -97,38 +93,6 @@ async function handleInject() {
 
   const output = formatInboxAsMarkdown(resp.messages);
   if (output) process.stdout.write(output);
-}
-
-async function handleAgentSpawning() {
-  const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
-  const roles = readRoles();
-
-  const agentName = hookData.tool_input?.name || hookData.tool_input?.description || "";
-  const matchedRole = matchRole(agentName, roles);
-  const teamName = resolveTeamName(config);
-
-  // Spawn agent in MAP via sidecar (server auto-emits agent_registered)
-  if (matchedRole) {
-    await sendCommand(config, buildSpawnCommand(agentName, matchedRole, teamName, hookData), sessionId);
-  }
-}
-
-async function handleAgentCompleted() {
-  const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
-  const roles = readRoles();
-
-  const agentName = hookData.tool_input?.name || hookData.tool_input?.description || "";
-  const matchedRole = matchRole(agentName, roles);
-  const teamName = resolveTeamName(config);
-
-  // Mark agent done in MAP via sidecar (server auto-emits agent_unregistered)
-  if (matchedRole) {
-    await sendCommand(config, buildDoneCommand(agentName, matchedRole, teamName, hookData), sessionId);
-  }
 }
 
 async function handleTurnCompleted() {
@@ -236,8 +200,6 @@ async function main() {
   try {
     switch (action) {
       case "inject": await handleInject(); break;
-      case "agent-spawning": await handleAgentSpawning(); break;
-      case "agent-completed": await handleAgentCompleted(); break;
       case "turn-completed": await handleTurnCompleted(); break;
       case "sessionlog-sync": await handleSessionlogSync(); break;
       case "subagent-start": await handleSubagentStart(); break;

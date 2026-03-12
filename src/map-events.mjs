@@ -56,63 +56,6 @@ export async function emitPayload(config, payload, meta, sessionId) {
 // ── Agent lifecycle commands (SDK primitives via sidecar) ─────────────────────
 
 /**
- * Build the agent ID in <session-id>/<role> format.
- * Uses tool_use_id as a unique session-like identifier for the spawned agent,
- * combined with the matched role. Falls back to agentName if no role matched.
- *
- * This ensures duplicate roles (e.g. two researchers) get unique IDs:
- *   "tu_abc123/researcher", "tu_def456/researcher"
- *
- * The scope (leader's session) groups all agents in the same team.
- */
-export function buildAgentId(agentName, matchedRole, hookData) {
-  const sessionPrefix = hookData.tool_use_id || hookData.session_id || Date.now().toString(36);
-  const role = matchedRole || agentName;
-  return `${sessionPrefix}/${role}`;
-}
-
-/**
- * Build a "spawn" sidecar command for a team agent.
- * Sidecar calls conn.spawn() → server auto-emits agent_registered.
- *
- * Agent IDs use <tool_use_id>/<role> format for uniqueness.
- * Scope uses the leader's session ID for team grouping.
- */
-export function buildSpawnCommand(agentName, matchedRole, teamName, hookData) {
-  const prompt =
-    hookData.tool_input?.prompt || hookData.tool_input?.description || "";
-  const agentId = buildAgentId(agentName, matchedRole, hookData);
-  return {
-    action: "spawn",
-    agent: {
-      agentId,
-      name: matchedRole || agentName,
-      role: matchedRole || "internal",
-      scopes: [hookData.session_id || `swarm:${teamName}`],
-      metadata: {
-        template: teamName,
-        isTeamRole: !!matchedRole,
-        task: prompt.substring(0, 300),
-        toolUseId: hookData.tool_use_id || "",
-      },
-    },
-  };
-}
-
-/**
- * Build a "done" sidecar command for a team agent.
- * Sidecar unregisters the agent → server auto-emits agent_unregistered.
- */
-export function buildDoneCommand(agentName, matchedRole, teamName, hookData) {
-  const agentId = buildAgentId(agentName, matchedRole, hookData);
-  return {
-    action: "done",
-    agentId,
-    reason: "completed",
-  };
-}
-
-/**
  * Build a "spawn" sidecar command for a subagent.
  */
 export function buildSubagentSpawnCommand(hookData, teamName) {

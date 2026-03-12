@@ -233,17 +233,15 @@ All hooks use MAP SDK primitives — no custom `swarm.*` event types. Clients su
 
 Hook dispatch:
 1. **UserPromptSubmit** → `map-hook.mjs inject`: reads MAP inbox, injects external messages into context. Forwards incoming `task.*` events to the opentasks graph if `opentasks.enabled`
-2. **PreToolUse(Task)** → `map-hook.mjs agent-spawning`: spawns agent via `conn.spawn()` (server auto-emits `agent_registered`). Agent lifecycle only — does not create tasks
-3. **PostToolUse(Task)** → `map-hook.mjs agent-completed`: marks agent done via sidecar (server auto-emits `agent_unregistered`). Agent lifecycle only — does not complete tasks
-4. **PostToolUse(opentasks)** → `map-hook.mjs opentasks-mcp-used`: bridges opentasks MCP tool use into MAP task events (`bridge-task-created`, `bridge-task-status`, `bridge-task-assigned`, `task.linked`, `task.sync`). Gated on both `opentasks.enabled` and `map.enabled`
-5. **PostToolUse(TaskCreate)** → `map-hook.mjs native-task-created`: emits `bridge-task-created` + `bridge-task-assigned` to MAP. Observability only — native tasks enter the opentasks graph via the `claude-tasks` provider, not this hook
-6. **PostToolUse(TaskUpdate)** → `map-hook.mjs native-task-updated`: emits `bridge-task-status` to MAP. Observability only
-7. **TaskCompleted** → `map-hook.mjs task-completed`: updates task in opentasks daemon (`updateTask`) + emits `bridge-task-status` to MAP
-8. **Stop** → `map-hook.mjs turn-completed`: updates sidecar state via `conn.updateState("idle")` (server auto-emits `agent_state_changed`)
-9. **Stop** → `map-hook.mjs sessionlog-sync`: reads sessionlog state, reports `trajectory/checkpoint` to MAP (falls back to `trajectory.checkpoint` message payload if server doesn't support trajectory)
-10. **SubagentStart** → `map-hook.mjs subagent-start`: spawns subagent via `conn.spawn()` with `role: "subagent"`
-11. **SubagentStop** → `map-hook.mjs subagent-stop`: marks subagent done
-12. **TeammateIdle** → `map-hook.mjs teammate-idle`: updates teammate state to idle
+2. **PostToolUse(opentasks)** → `map-hook.mjs opentasks-mcp-used`: bridges opentasks MCP tool use into MAP task events (`bridge-task-created`, `bridge-task-status`, `bridge-task-assigned`, `task.linked`, `task.sync`). Gated on both `opentasks.enabled` and `map.enabled`
+3. **PostToolUse(TaskCreate)** → `map-hook.mjs native-task-created`: emits `bridge-task-created` + `bridge-task-assigned` to MAP. Observability only — native tasks enter the opentasks graph via the `claude-tasks` provider, not this hook
+4. **PostToolUse(TaskUpdate)** → `map-hook.mjs native-task-updated`: emits `bridge-task-status` to MAP. Observability only
+5. **TaskCompleted** → `map-hook.mjs task-completed`: updates task in opentasks daemon (`updateTask`) + emits `bridge-task-status` to MAP
+6. **Stop** → `map-hook.mjs turn-completed`: updates sidecar state via `conn.updateState("idle")` (server auto-emits `agent_state_changed`)
+7. **Stop** → `map-hook.mjs sessionlog-sync`: reads sessionlog state, reports `trajectory/checkpoint` to MAP (falls back to `trajectory.checkpoint` message payload if server doesn't support trajectory)
+8. **SubagentStart** → `map-hook.mjs subagent-start`: spawns subagent via `conn.spawn()` with `role: "subagent"`
+9. **SubagentStop** → `map-hook.mjs subagent-stop`: marks subagent done
+10. **TeammateIdle** → `map-hook.mjs teammate-idle`: updates teammate state to idle
 
 ### MAP sidecar
 

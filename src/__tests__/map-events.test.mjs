@@ -1,8 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  buildAgentId,
-  buildSpawnCommand,
-  buildDoneCommand,
   buildSubagentSpawnCommand,
   buildSubagentDoneCommand,
   buildStateCommand,
@@ -22,114 +19,6 @@ import {
 
 describe("map-events", () => {
   // ── Agent lifecycle commands ──────────────────────────────────────────────
-
-  describe("buildAgentId", () => {
-    it("uses tool_use_id/role format", () => {
-      const id = buildAgentId("agent-1", "executor", makeHookData());
-      expect(id).toBe("tool-123/executor");
-    });
-
-    it("falls back to agentName when no role matched", () => {
-      const id = buildAgentId("my-agent", null, makeHookData());
-      expect(id).toBe("tool-123/my-agent");
-    });
-
-    it("uses session_id when no tool_use_id", () => {
-      const id = buildAgentId("a", "exec", { session_id: "sess-1" });
-      expect(id).toBe("sess-1/exec");
-    });
-  });
-
-  describe("buildSpawnCommand", () => {
-    it("returns action 'spawn'", () => {
-      const cmd = buildSpawnCommand("agent-1", "executor", "gsd", makeHookData());
-      expect(cmd.action).toBe("spawn");
-    });
-
-    it("sets agentId to tool_use_id/role format when matched", () => {
-      const cmd = buildSpawnCommand("agent-1", "executor", "gsd", makeHookData());
-      expect(cmd.agent.agentId).toBe("tool-123/executor");
-    });
-
-    it("sets agentId to tool_use_id/agentName when no role match", () => {
-      const cmd = buildSpawnCommand("my-agent", null, "gsd", makeHookData());
-      expect(cmd.agent.agentId).toBe("tool-123/my-agent");
-    });
-
-    it("sets name to matchedRole when provided", () => {
-      const cmd = buildSpawnCommand("a", "executor", "t", makeHookData());
-      expect(cmd.agent.name).toBe("executor");
-    });
-
-    it("sets name to agentName when no match", () => {
-      const cmd = buildSpawnCommand("my-agent", null, "t", makeHookData());
-      expect(cmd.agent.name).toBe("my-agent");
-    });
-
-    it("sets role from matchedRole or 'internal'", () => {
-      expect(buildSpawnCommand("a", "executor", "t", makeHookData()).agent.role).toBe("executor");
-      expect(buildSpawnCommand("a", null, "t", makeHookData()).agent.role).toBe("internal");
-    });
-
-    it("uses session_id for scopes when available", () => {
-      const hookData = { ...makeHookData(), session_id: "sess-abc" };
-      const cmd = buildSpawnCommand("a", null, "my-team", hookData);
-      expect(cmd.agent.scopes).toEqual(["sess-abc"]);
-    });
-
-    it("falls back to swarm:teamName for scopes when no session_id", () => {
-      const cmd = buildSpawnCommand("a", null, "my-team", makeHookData());
-      expect(cmd.agent.scopes).toEqual(["swarm:my-team"]);
-    });
-
-    it("sets metadata.isTeamRole based on matchedRole", () => {
-      expect(buildSpawnCommand("a", "exec", "t", makeHookData()).agent.metadata.isTeamRole).toBe(true);
-      expect(buildSpawnCommand("a", null, "t", makeHookData()).agent.metadata.isTeamRole).toBe(false);
-    });
-
-    it("sets metadata.template to teamName", () => {
-      const cmd = buildSpawnCommand("a", null, "gsd", makeHookData());
-      expect(cmd.agent.metadata.template).toBe("gsd");
-    });
-
-    it("sets metadata.toolUseId from hookData", () => {
-      const cmd = buildSpawnCommand("a", null, "t", makeHookData({ toolUseId: "tu-xyz" }));
-      expect(cmd.agent.metadata.toolUseId).toBe("tu-xyz");
-    });
-
-    it("truncates task in metadata to 300 characters", () => {
-      const longPrompt = "x".repeat(500);
-      const cmd = buildSpawnCommand("a", null, "t", makeHookData({ prompt: longPrompt }));
-      expect(cmd.agent.metadata.task.length).toBe(300);
-    });
-
-    it("uses tool_input.prompt for task metadata", () => {
-      const cmd = buildSpawnCommand("a", null, "t", makeHookData({ prompt: "do X" }));
-      expect(cmd.agent.metadata.task).toBe("do X");
-    });
-  });
-
-  describe("buildDoneCommand", () => {
-    it("returns action 'done'", () => {
-      const cmd = buildDoneCommand("a", "executor", "t", makeHookData());
-      expect(cmd.action).toBe("done");
-    });
-
-    it("sets agentId to tool_use_id/role format when matched", () => {
-      const cmd = buildDoneCommand("a", "executor", "gsd", makeHookData());
-      expect(cmd.agentId).toBe("tool-123/executor");
-    });
-
-    it("sets agentId to tool_use_id/agentName when no match", () => {
-      const cmd = buildDoneCommand("my-agent", null, "gsd", makeHookData());
-      expect(cmd.agentId).toBe("tool-123/my-agent");
-    });
-
-    it("sets reason to 'completed'", () => {
-      const cmd = buildDoneCommand("a", null, "t", makeHookData());
-      expect(cmd.reason).toBe("completed");
-    });
-  });
 
   describe("buildSubagentSpawnCommand", () => {
     it("returns action 'spawn'", () => {
