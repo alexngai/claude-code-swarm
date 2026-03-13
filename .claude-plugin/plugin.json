@@ -12,6 +12,11 @@
       "env": {
         "OPENTASKS_WORKING_DIR": "${workspaceFolder}"
       }
+    },
+    "agent-inbox": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/run-agent-inbox-mcp.sh",
+      "args": [],
+      "env": {}
     }
   }
 }
