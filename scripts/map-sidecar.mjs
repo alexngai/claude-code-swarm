@@ -5,20 +5,24 @@
  * Two-socket, one-process architecture:
  * - Lifecycle socket: spawn/done/state/trajectory-checkpoint (existing protocol)
  * - Inbox socket: agent-inbox IPC for messaging (send/check_inbox/notify)
- * Both sockets share a single MAP connection.
  *
- * Incoming MAP messages are handled by agent-inbox (via useConnection),
- * which stores them in memory/SQLite and serves them via the inbox IPC socket.
- * The inject hook reads messages via check_inbox IPC.
+ * Transport modes:
+ * - Mesh (preferred): Embedded MeshPeer + agent-inbox Phase 2 integration.
+ *   MeshPeer handles transport, encryption, discovery. Agent-inbox handles
+ *   messaging, registry, federation. ~200 lines of adapter code.
+ * - WebSocket (fallback): Direct MAP SDK connection (legacy mode).
+ *   Used when agentic-mesh is not available.
  *
  * Usage: node map-sidecar.mjs --server ws://localhost:8080 --scope swarm:team --system-id system-id
  *          [--session-id id] [--inbox-config json] [--inactivity-timeout ms]
+ *          [--mesh-peer-id id] [--mesh-enabled]
  */
 
 import fs from "fs";
 import path from "path";
 import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths } from "../src/paths.mjs";
 import { connectToMAP } from "../src/map-connection.mjs";
+import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
 
 // ── Parse CLI args ──────────────────────────────────────────────────────────
@@ -28,11 +32,18 @@ function getArg(name, defaultValue = "") {
   const idx = args.indexOf(`--${name}`);
   return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : defaultValue;
 }
+function hasFlag(name) {
+  return args.includes(`--${name}`);
+}
 const MAP_SERVER = getArg("server", "ws://localhost:8080");
 const MAP_SCOPE = getArg("scope", "swarm:default");
 const SYSTEM_ID = getArg("system-id", "system-claude-swarm");
 const SESSION_ID = getArg("session-id", "");
 const INACTIVITY_TIMEOUT_MS = parseInt(getArg("inactivity-timeout", ""), 10) || 30 * 60 * 1000;
+
+// Mesh transport args
+const MESH_ENABLED = hasFlag("mesh-enabled");
+const MESH_PEER_ID = getArg("mesh-peer-id", "");
 
 // Parse inbox config (passed as JSON blob from sidecar-client)
 let INBOX_CONFIG = null;
@@ -53,9 +64,11 @@ const sPaths = SESSION_ID
 // ── State ───────────────────────────────────────────────────────────────────
 
 let connection = null;
+let meshPeer = null;
 let socketServer = null;
 let inboxInstance = null;
 let inactivityTimer = null;
+let transportMode = "websocket"; // "mesh" or "websocket"
 const registeredAgents = new Map();
 
 // ── Inactivity Timer ────────────────────────────────────────────────────────
@@ -75,7 +88,7 @@ async function shutdown() {
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
 
-  // Stop agent-inbox first (it borrows the connection, doesn't own it)
+  // Stop agent-inbox first (it borrows the connection/peer, doesn't own it)
   if (inboxInstance) {
     try { await inboxInstance.stop(); } catch { /* ignore */ }
   }
@@ -88,6 +101,11 @@ async function shutdown() {
 
   if (connection) {
     try { await connection.disconnect(); } catch { /* ignore */ }
+  }
+
+  // Stop MeshPeer after disconnecting the connection that uses it
+  if (meshPeer) {
+    try { await meshPeer.stop(); } catch { /* ignore */ }
   }
 
   process.exit(0);
@@ -108,9 +126,70 @@ process.on("unhandledRejection", (reason) => {
   // non-critical SDK operation (e.g. scope-based send, state update).
 });
 
-// ── Agent Inbox Setup ───────────────────────────────────────────────────────
+// ── Transport Setup ─────────────────────────────────────────────────────────
 
-async function startAgentInbox(mapConnection) {
+/**
+ * Try to start with MeshPeer transport (preferred).
+ * Returns true if mesh transport was established.
+ */
+async function tryMeshTransport() {
+  const teamName = MAP_SCOPE.replace("swarm:", "");
+  const peerId = MESH_PEER_ID || `${teamName}-sidecar`;
+
+  const result = await createMeshPeer({
+    peerId,
+    scope: MAP_SCOPE,
+    systemId: SYSTEM_ID,
+    mapServer: MAP_SERVER !== "ws://localhost:8080" ? MAP_SERVER : undefined,
+    onMessage: () => resetInactivityTimer(),
+  });
+
+  if (!result) return false;
+
+  meshPeer = result.peer;
+  connection = result.connection;
+  transportMode = "mesh";
+
+  // Start agent-inbox with MeshPeer (Phase 2 integration)
+  if (INBOX_CONFIG || true) {
+    // Always try mesh inbox — it handles agent registry + messaging
+    inboxInstance = await createMeshInbox({
+      meshPeer: result.peer,
+      scope: MAP_SCOPE,
+      systemId: SYSTEM_ID,
+      socketPath: sPaths.inboxSocketPath,
+      inboxConfig: INBOX_CONFIG || {},
+    });
+  }
+
+  return true;
+}
+
+/**
+ * Start with direct MAP SDK WebSocket transport (fallback).
+ */
+async function startWebSocketTransport() {
+  connection = await connectToMAP({
+    server: MAP_SERVER,
+    scope: MAP_SCOPE,
+    systemId: SYSTEM_ID,
+    onMessage: () => {
+      resetInactivityTimer();
+    },
+  });
+
+  transportMode = "websocket";
+
+  // Start agent-inbox with MAP connection (legacy mode)
+  if (INBOX_CONFIG && connection) {
+    inboxInstance = await startLegacyAgentInbox(connection);
+  }
+}
+
+/**
+ * Start agent-inbox in legacy mode (shared MAP connection, no MeshPeer).
+ */
+async function startLegacyAgentInbox(mapConnection) {
   if (!INBOX_CONFIG) return null;
 
   try {
@@ -140,7 +219,7 @@ async function startAgentInbox(mapConnection) {
     };
 
     const inbox = await createAgentInbox(opts);
-    process.stderr.write(`[sidecar] Agent Inbox started on ${sPaths.inboxSocketPath}\n`);
+    process.stderr.write(`[sidecar] Agent Inbox started (websocket mode) on ${sPaths.inboxSocketPath}\n`);
     return inbox;
   } catch (err) {
     process.stderr.write(`[sidecar] Agent Inbox not available: ${err.message}\n`);
@@ -154,25 +233,23 @@ async function main() {
   // Ensure directories exist
   fs.mkdirSync(path.dirname(sPaths.pidPath), { recursive: true });
 
-  // Connect to MAP server
-  connection = await connectToMAP({
-    server: MAP_SERVER,
-    scope: MAP_SCOPE,
-    systemId: SYSTEM_ID,
-    onMessage: () => {
-      resetInactivityTimer();
-      // Incoming messages are handled by agent-inbox via useConnection().
-      // The sidecar's onMessage only resets the inactivity timer.
-    },
-  });
-
-  // Start agent-inbox if configured (shares the MAP connection)
-  if (INBOX_CONFIG && connection) {
-    inboxInstance = await startAgentInbox(connection);
+  // Try mesh transport first, fall back to WebSocket
+  if (MESH_ENABLED) {
+    const meshOk = await tryMeshTransport();
+    if (!meshOk) {
+      process.stderr.write("[sidecar] Mesh transport unavailable, falling back to WebSocket\n");
+      await startWebSocketTransport();
+    }
+  } else {
+    await startWebSocketTransport();
   }
 
   // Start lifecycle UNIX socket server
-  const onCommand = createCommandHandler(connection, MAP_SCOPE, registeredAgents);
+  const onCommand = createCommandHandler(connection, MAP_SCOPE, registeredAgents, {
+    inboxInstance,
+    meshPeer,
+    transportMode,
+  });
   socketServer = createSocketServer(sPaths.socketPath, (command, client) => {
     resetInactivityTimer();
     onCommand(command, client);
@@ -181,7 +258,9 @@ async function main() {
   // Start inactivity timer
   resetInactivityTimer();
 
-  process.stderr.write(`[sidecar] Ready${SESSION_ID ? ` (session: ${SESSION_ID})` : ""}${inboxInstance ? " [inbox active]" : ""}\n`);
+  const modeLabel = transportMode === "mesh" ? "mesh" : "websocket";
+  const inboxLabel = inboxInstance ? " [inbox active]" : "";
+  process.stderr.write(`[sidecar] Ready (${modeLabel})${SESSION_ID ? ` (session: ${SESSION_ID})` : ""}${inboxLabel}\n`);
 }
 
 main().catch((err) => {

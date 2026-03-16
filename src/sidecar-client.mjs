@@ -11,6 +11,7 @@ import net from "net";
 import { spawn } from "child_process";
 import { SOCKET_PATH, PID_PATH, pluginDir, sessionPaths } from "./paths.mjs";
 import { resolveScope, resolveMapServer, DEFAULTS } from "./config.mjs";
+import { meshFireAndForget } from "./mesh-connection.mjs";
 
 /**
  * Send a command to the agent-inbox IPC socket and return the response.
@@ -99,6 +100,12 @@ export async function startSidecar(config, pluginDirOverride, sessionId) {
     }
     if (config.inbox?.enabled) {
       args.push("--inbox-config", JSON.stringify(config.inbox));
+    }
+    if (config.mesh?.enabled) {
+      args.push("--mesh-enabled");
+      if (config.mesh.peerId) {
+        args.push("--mesh-peer-id", config.mesh.peerId);
+      }
     }
 
     const child = spawn("node", args, {

@@ -64,6 +64,9 @@ function getRequiredGlobalPackages(config) {
   if (config.skilltree?.enabled) {
     packages.push("skill-tree");
   }
+  if (config.mesh?.enabled) {
+    packages.push("agentic-mesh");
+  }
   return packages;
 }
 
@@ -358,6 +361,7 @@ export async function bootstrap(pluginDirOverride, sessionId) {
     team,
     mapEnabled: config.map.enabled,
     mapStatus,
+    meshEnabled: config.mesh?.enabled,
     sessionlogEnabled: config.sessionlog.enabled,
     sessionlogStatus,
     sessionlogSync: config.sessionlog.sync,

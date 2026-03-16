@@ -50,6 +50,9 @@ export {
 // MAP connection
 export { connectToMAP, fireAndForget, fireAndForgetTrajectory } from "./map-connection.mjs";
 
+// Mesh connection
+export { createMeshPeer, createMeshInbox, meshFireAndForget } from "./mesh-connection.mjs";
+
 // Sidecar client
 export { sendToSidecar, isSidecarAlive, startSidecar, killSidecar, ensureSidecar } from "./sidecar-client.mjs";
 

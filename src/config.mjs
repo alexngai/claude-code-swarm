@@ -106,6 +106,11 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
       basePath: envStr("SWARM_SKILLTREE_BASE_PATH") ?? project.skilltree?.basePath ?? global.skilltree?.basePath ?? "",
       defaultProfile: envStr("SWARM_SKILLTREE_DEFAULT_PROFILE") ?? project.skilltree?.defaultProfile ?? global.skilltree?.defaultProfile ?? "",
     },
+    mesh: {
+      enabled: envBool("SWARM_MESH_ENABLED") ?? Boolean(project.mesh?.enabled ?? global.mesh?.enabled),
+      peerId: envStr("SWARM_MESH_PEER_ID") ?? project.mesh?.peerId ?? global.mesh?.peerId ?? "",
+      mapServer: envStr("SWARM_MESH_MAP_SERVER") ?? project.mesh?.mapServer ?? global.mesh?.mapServer ?? "",
+    },
   };
 }
 

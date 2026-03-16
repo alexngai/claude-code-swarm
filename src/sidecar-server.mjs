@@ -3,6 +3,11 @@
  *
  * Provides the socket server that hooks communicate with, and the command
  * dispatch logic for all sidecar operations.
+ *
+ * Supports two transport modes:
+ * - "mesh": Uses inbox registry for agent lifecycle (spawn/done), MeshPeer
+ *   connection for task bridge events and trajectory.
+ * - "websocket": Uses MAP SDK primitives directly (legacy mode).
  */
 
 import fs from "fs";
@@ -73,20 +78,27 @@ export function createSocketServer(socketPath, onCommand) {
 /**
  * Create a command handler for the sidecar socket server.
  *
- * Uses MAP SDK primitives: conn.spawn() for agent registration (server
- * auto-emits agent_registered), conn.updateState() for state changes
- * (server auto-emits agent_state_changed), and conn.send() for message
- * payloads. Task events are emitted via the opentasks MAP event bridge
- * (bridge-* commands), which shares the same MAP connection.
+ * In mesh mode, agent lifecycle (spawn/done) is delegated to the inbox
+ * registry when available, providing structured agent management. Task
+ * bridge events and other MAP primitives still go through the connection.
  *
- * @param {object|null} connection - MAP AgentConnection (or null if disconnected)
+ * In websocket mode, all operations use MAP SDK primitives directly
+ * (conn.spawn, conn.updateState, conn.send, etc.).
+ *
+ * @param {object|null} connection - MAP AgentConnection or MeshPeer connection
  * @param {string} scope - MAP scope name
  * @param {Map} registeredAgents - Map of agentId → spawn metadata
+ * @param {object} [opts] - Additional options
+ * @param {object} [opts.inboxInstance] - Agent-inbox instance (mesh mode)
+ * @param {object} [opts.meshPeer] - MeshPeer instance (mesh mode, for agent registration)
+ * @param {string} [opts.transportMode] - "mesh" or "websocket"
  * @returns {Function} async (command, client) => void
  */
-export function createCommandHandler(connection, scope, registeredAgents) {
+export function createCommandHandler(connection, scope, registeredAgents, opts = {}) {
   // Use a getter pattern so the connection ref can be updated
   let conn = connection;
+  const { inboxInstance, meshPeer, transportMode = "websocket" } = opts;
+  const useMeshRegistry = transportMode === "mesh" && inboxInstance;
 
   const handler = async (command, client) => {
     const { action } = command;
@@ -113,12 +125,48 @@ export function createCommandHandler(connection, scope, registeredAgents) {
           break;
         }
 
-        // --- SDK-native agent lifecycle ---
+        // --- Agent lifecycle ---
+        // In mesh mode: delegate to inbox registry
+        // In websocket mode: use MAP SDK primitives
 
         case "spawn": {
-          if (conn) {
-            const { agentId, name, role, scopes: agentScopes, metadata } =
-              command.agent;
+          const { agentId, name, role, scopes: agentScopes, metadata } =
+            command.agent;
+
+          if (useMeshRegistry) {
+            // Mesh mode: register via inbox registry + MeshPeer MapServer
+            try {
+              // Register in inbox storage for message routing
+              if (inboxInstance.storage) {
+                inboxInstance.storage.putAgent({
+                  agent_id: agentId,
+                  scope,
+                  status: "active",
+                  metadata: { name, role, ...metadata },
+                  registered_at: new Date().toISOString(),
+                  last_active_at: new Date().toISOString(),
+                });
+              }
+              registeredAgents.set(agentId, { name, role, metadata });
+
+              // Also register on the MeshPeer's MapServer for observability
+              if (meshPeer) {
+                try {
+                  await meshPeer.createAgent({ agentId, name, role, metadata });
+                } catch {
+                  // Best-effort — agent may already exist
+                }
+              }
+
+              respond(client, { ok: true, agent: { agentId, name, role } });
+            } catch (err) {
+              process.stderr.write(
+                `[sidecar] spawn (mesh) failed: ${err.message}\n`
+              );
+              respond(client, { ok: false, error: err.message });
+            }
+          } else if (conn) {
+            // WebSocket mode: use MAP SDK
             try {
               const result = await conn.spawn({
                 agentId,
@@ -142,8 +190,40 @@ export function createCommandHandler(connection, scope, registeredAgents) {
         }
 
         case "done": {
-          if (conn) {
-            const { agentId, reason } = command;
+          const { agentId, reason } = command;
+
+          if (useMeshRegistry) {
+            // Mesh mode: disconnect via inbox registry + MeshPeer MapServer
+            try {
+              // Remove from inbox storage
+              if (inboxInstance.storage) {
+                try {
+                  inboxInstance.storage.putAgent({
+                    agent_id: agentId,
+                    scope,
+                    status: "disconnected",
+                    metadata: {},
+                    registered_at: new Date().toISOString(),
+                    last_active_at: new Date().toISOString(),
+                  });
+                } catch { /* best-effort */ }
+              }
+            } catch {
+              // Agent may already be gone
+            }
+
+            // Also unregister from MeshPeer's MapServer
+            if (meshPeer) {
+              try {
+                meshPeer.server.unregisterAgent(agentId);
+              } catch {
+                // Best-effort
+              }
+            }
+
+            registeredAgents.delete(agentId);
+          } else if (conn) {
+            // WebSocket mode: use MAP SDK
             try {
               await conn.callExtension("map/agents/unregister", {
                 agentId,
@@ -192,9 +272,9 @@ export function createCommandHandler(connection, scope, registeredAgents) {
         }
 
         // --- Task event bridge (opentasks → MAP) ---
-        // These emit task events over the shared MAP connection using
-        // the opentasks event bridge pattern. The actual task data lives
-        // in the opentasks daemon; these just emit observability events.
+        // These emit task events over the shared connection using
+        // the opentasks event bridge pattern. Works identically in
+        // both mesh and websocket modes.
 
         case "bridge-task-created": {
           if (conn) {
@@ -253,10 +333,7 @@ export function createCommandHandler(connection, scope, registeredAgents) {
           if (conn) {
             try {
               if (command.agentId) {
-                // State update for a specific child agent — update via metadata.
-                // Try exact match first, then fall back to matching by role name
-                // (TeammateIdle/TaskCompleted hooks may use <team>-<role> format
-                // while agents are registered as <tool_use_id>/<role>).
+                // State update for a specific child agent
                 let agentKey = command.agentId;
                 let existing = registeredAgents.get(agentKey);
                 if (!existing) {
@@ -294,7 +371,7 @@ export function createCommandHandler(connection, scope, registeredAgents) {
         }
 
         case "ping": {
-          respond(client, { ok: true, pid: process.pid });
+          respond(client, { ok: true, pid: process.pid, transport: transportMode });
           break;
         }
 

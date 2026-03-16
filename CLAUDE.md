@@ -113,6 +113,28 @@ MAP options:
 - `auth.token` — Authentication token appended as a query parameter to the server URL
 - `auth.param` — Query parameter name for the token (default: `token`)
 
+### With MeshPeer transport (agentic-mesh)
+```json
+{
+  "template": "gsd",
+  "map": {
+    "server": "ws://localhost:8080"
+  },
+  "mesh": {
+    "enabled": true
+  }
+}
+```
+
+When enabled, the sidecar uses an embedded MeshPeer (from agentic-mesh) instead of a direct MAP SDK WebSocket connection. This provides encrypted P2P transport, agent discovery via MapServer registry, and federation with hop/loop detection. Agent-inbox integration gives structured messaging, threading, and delivery tracking.
+
+If agentic-mesh is not available, the sidecar falls back to the direct MAP SDK WebSocket connection automatically.
+
+Mesh options:
+- `enabled` — Enable MeshPeer transport (default: `false`)
+- `peerId` — MeshPeer peer ID (default: `<teamName>-sidecar`)
+- `mapServer` — Optional MAP server URL for hybrid mode (mesh + MAP bridge)
+
 ### With OpenTasks
 ```json
 {
@@ -243,6 +265,9 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `skilltree.enabled` | `SWARM_SKILLTREE_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `skilltree.basePath` | `SWARM_SKILLTREE_BASE_PATH` | string | `""` |
 | `skilltree.defaultProfile` | `SWARM_SKILLTREE_DEFAULT_PROFILE` | string | `""` |
+| `mesh.enabled` | `SWARM_MESH_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
+| `mesh.peerId` | `SWARM_MESH_PEER_ID` | string | `""` |
+| `mesh.mapServer` | `SWARM_MESH_MAP_SERVER` | string | `""` |
 
 MAP is implicitly enabled when `map.server` is configured (in file or via `SWARM_MAP_SERVER`). Use `SWARM_MAP_ENABLED=false` to explicitly disable.
 
@@ -310,16 +335,28 @@ Hook dispatch:
 
 ### MAP sidecar
 
-The sidecar (`scripts/map-sidecar.mjs`) is a persistent Node.js process that:
-- Connects to the MAP server via WebSocket with auto-reconnection
-- Listens on a UNIX socket (`.swarm/claude-swarm/tmp/map/sidecar.sock`) for commands from hooks
-- Writes incoming external MAP messages to `.swarm/claude-swarm/tmp/map/inbox.jsonl`
-- Manages agent lifecycle via SDK primitives: `conn.spawn()` for registration, `conn.callExtension("map/agents/unregister")` for deregistration, `conn.updateState()` for state changes
-- Sends task lifecycle as typed message payloads via `conn.send()`
-- Reports trajectory checkpoints via `trajectory/checkpoint` (with `trajectory.checkpoint` message fallback)
-- Self-terminates after 30 minutes of inactivity (session mode)
+The sidecar (`scripts/map-sidecar.mjs`) is a persistent Node.js process with two transport modes:
 
-The hook helper (`scripts/map-hook.mjs`) includes best-effort auto-recovery: if the sidecar is down, it attempts to restart it, with a fire-and-forget direct WebSocket fallback if recovery fails.
+**Mesh mode** (preferred, when `mesh.enabled: true`):
+- Creates an embedded MeshPeer (from agentic-mesh) for encrypted P2P transport
+- Passes the MeshPeer to agent-inbox Phase 2 integration for structured messaging, agent registry, and federation
+- Agent lifecycle (spawn/done) handled by inbox registry, with MAP registration for external observability
+- Task bridge events, trajectory checkpoints, and state updates go through the MeshPeer connection
+- Falls back to WebSocket mode automatically if agentic-mesh is unavailable
+
+**WebSocket mode** (fallback/default):
+- Connects to the MAP server via WebSocket with auto-reconnection
+- Agent lifecycle via MAP SDK primitives: `conn.spawn()`, `conn.callExtension("map/agents/unregister")`, `conn.updateState()`
+- Agent-inbox shares the MAP connection for messaging (legacy integration)
+
+Both modes:
+- Listen on a UNIX socket (`.swarm/claude-swarm/tmp/map/sidecar.sock`) for commands from hooks
+- Manage agent-inbox on a separate IPC socket for messaging
+- Send task lifecycle as typed message payloads via `conn.send()`
+- Report trajectory checkpoints via `trajectory/checkpoint` (with broadcast fallback)
+- Self-terminate after 30 minutes of inactivity (session mode)
+
+The hook helper (`scripts/map-hook.mjs`) includes best-effort auto-recovery: if the sidecar is down, it attempts to restart it, with a fire-and-forget fallback (mesh or direct WebSocket) if recovery fails.
 
 ### OpenTasks integration
 
@@ -348,6 +385,7 @@ src/paths.mjs              ← SWARM_DIR, CONFIG_PATH, TMP_DIR, TEAMS_DIR, MAP_D
 src/roles.mjs              ← readRoles(), matchRole(), writeRoles()
 src/inbox.mjs              ← readInbox(), clearInbox(), formatInboxAsMarkdown()
 src/map-connection.mjs     ← connectToMAP(), fireAndForget(), fireAndForgetTrajectory()
+src/mesh-connection.mjs    ← createMeshPeer(), createMeshInbox(), meshFireAndForget()
 src/sidecar-client.mjs     ← sendToSidecar(), ensureSidecar(), startSidecar()
 src/sidecar-server.mjs     ← createSocketServer(), createCommandHandler()
 src/map-events.mjs         ← sendCommand(), emitPayload(), build*Command(), handle*Event()
@@ -370,6 +408,8 @@ Local (installed via `npm install --production` in plugin directory):
 Global (managed by swarmkit, installed on demand during bootstrap):
 - **openteams** — team topology parsing and artifact generation (always installed)
 - **@multi-agent-protocol/sdk** — MAP protocol client (installed when `map.enabled: true`)
+- **agentic-mesh** — encrypted P2P mesh transport with embedded MeshPeer (installed when `mesh.enabled: true`)
+- **agent-inbox** — MAP-native message router with structured messaging (installed when `inbox.enabled: true`)
 - **sessionlog** — git-integrated session capture (installed when `sessionlog.enabled: true`)
 - **minimem** — file-based memory with vector search (installed when `minimem.enabled: true`)
 - **skill-tree** — versioned skill library with serving layer (installed when `skilltree.enabled: true`)

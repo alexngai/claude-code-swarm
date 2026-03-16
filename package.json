@@ -18,6 +18,7 @@
     "swarm-generate-agents": "./scripts/generate-agents.mjs"
   },
   "dependencies": {
+    "agentic-mesh": "^0.2.0",
     "js-yaml": "^4.1.0"
   },
   "peerDependencies": {

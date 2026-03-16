@@ -20,6 +20,7 @@
 
 import { sendToSidecar, ensureSidecar } from "./sidecar-client.mjs";
 import { fireAndForget } from "./map-connection.mjs";
+import { meshFireAndForget } from "./mesh-connection.mjs";
 import { sessionPaths } from "./paths.mjs";
 
 // ── Sidecar command emission ──────────────────────────────────────────────────
@@ -40,7 +41,12 @@ export async function sendCommand(config, command, sessionId) {
       await sendToSidecar(command, sPaths.socketPath);
     } else if (command.action === "emit") {
       // Only message payloads can be fire-and-forget sent
-      await fireAndForget(config, command.event);
+      // Prefer mesh transport when enabled, fall back to direct WebSocket
+      if (config.mesh?.enabled) {
+        await meshFireAndForget(config, command.event);
+      } else {
+        await fireAndForget(config, command.event);
+      }
     }
     // spawn/done/state/task-* commands require the sidecar — silently drop if unavailable
   }
