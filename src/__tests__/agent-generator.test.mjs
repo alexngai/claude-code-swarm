@@ -145,34 +145,33 @@ describe("agent-generator", () => {
       expect(md).toContain("You execute things.");
     });
 
-    it("includes team coordination section", () => {
+    it("includes capabilities section with team context", () => {
       const md = generateAgentMd(baseOpts);
-      expect(md).toContain("## Team Coordination");
+      expect(md).toContain("## Swarm Capabilities");
       expect(md).toContain("**gsd** team");
     });
 
-    it("includes communication section", () => {
+    it("includes communication in capabilities", () => {
       const md = generateAgentMd(baseOpts);
       expect(md).toContain("### Communication");
       expect(md).toContain("SendMessage");
     });
 
-    it("includes task management section", () => {
+    it("includes task management in capabilities", () => {
       const md = generateAgentMd(baseOpts);
       expect(md).toContain("### Task Management");
       expect(md).toContain("TaskList");
     });
 
-    it("includes TaskCreate for root position", () => {
-      const md = generateAgentMd({ ...baseOpts, position: "root" });
+    it("includes TaskCreate in capabilities for all agents (general guidance)", () => {
+      const md = generateAgentMd(baseOpts);
       expect(md).toContain("TaskCreate");
     });
 
-    it("omits TaskCreate for spawned position", () => {
+    it("omits TaskCreate from frontmatter tools for spawned position", () => {
       const md = generateAgentMd(baseOpts);
-      // The task management section mentions TaskCreate for root/companion only
-      const taskSection = md.split("### Task Management")[1].split("###")[0];
-      expect(taskSection).not.toContain("TaskCreate");
+      const frontmatter = md.split("---")[1];
+      expect(frontmatter).not.toContain("TaskCreate");
     });
 
     it("includes MAP observability note", () => {

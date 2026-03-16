@@ -7,6 +7,7 @@
 
 import fs from "fs";
 import path from "path";
+import { buildCapabilitiesContext } from "./context-output.mjs";
 
 /**
  * Parse team.yaml without js-yaml dependency (basic YAML subset).
@@ -91,6 +92,16 @@ export function generateAgentMd({
   opentasksEnabled,
   minimemEnabled,
   skillLoadout,
+  // Capabilities context options (passed through to buildCapabilitiesContext)
+  opentasksStatus,
+  minimemStatus,
+  skilltreeEnabled,
+  skilltreeStatus,
+  inboxEnabled,
+  meshEnabled,
+  mapEnabled,
+  mapStatus,
+  sessionlogSync,
 }) {
   const lines = [];
 
@@ -111,25 +122,7 @@ export function generateAgentMd({
   lines.push(skillContent);
   lines.push("");
 
-  // Add team coordination instructions
-  lines.push("## Team Coordination");
-  lines.push("");
-  lines.push(`You are part of the **${teamName}** team.`);
-  lines.push("");
-
-  // Communication via SendMessage
-  lines.push("### Communication");
-  lines.push("");
-  lines.push("Use **SendMessage** to communicate with teammates:");
-  lines.push(
-    '- `SendMessage(type="message", recipient="<agent-name>", content="...", summary="...")`'
-  );
-  lines.push(
-    "- Only use broadcast when absolutely necessary (it messages every teammate)."
-  );
-  lines.push("");
-
-  // Add role-specific communication patterns from topology routing
+  // Role-specific communication patterns from topology (unique per role, not in capabilities)
   if (manifest.communication?.routing?.peers) {
     const outbound = manifest.communication.routing.peers.filter(
       (r) => r.from === roleName
@@ -138,7 +131,7 @@ export function generateAgentMd({
       (r) => r.to === roleName
     );
     if (outbound.length > 0 || inbound.length > 0) {
-      lines.push("#### Your communication patterns");
+      lines.push("## Your Communication Patterns");
       lines.push("");
       for (const route of outbound) {
         const signals = route.signals?.join(", ") || "updates";
@@ -152,10 +145,10 @@ export function generateAgentMd({
     }
   }
 
-  // Signals this role emits — now via SendMessage
+  // Signals this role emits
   if (manifest.communication?.emissions?.[roleName]) {
     const emissions = manifest.communication.emissions[roleName];
-    lines.push("#### Signals you emit");
+    lines.push("## Signals You Emit");
     lines.push("");
     lines.push(
       "When these events occur, notify the relevant agents via SendMessage:"
@@ -169,7 +162,7 @@ export function generateAgentMd({
   // Signals this role subscribes to
   if (manifest.communication?.subscriptions?.[roleName]) {
     const subs = manifest.communication.subscriptions[roleName];
-    lines.push("#### Signals you receive");
+    lines.push("## Signals You Receive");
     lines.push("");
     lines.push("Watch for messages from teammates about:");
     for (const sub of subs) {
@@ -179,63 +172,7 @@ export function generateAgentMd({
     lines.push("");
   }
 
-  // Task management section
-  if (opentasksEnabled) {
-    lines.push("### Task Management (via opentasks)");
-    lines.push("");
-    lines.push("Use **opentasks MCP tools** for all task management:");
-    lines.push(
-      "- **opentasks__list_tasks** — check available tasks and their status"
-    );
-    lines.push(
-      "- **opentasks__update_task** — claim tasks (set assignee to your name), update status"
-    );
-    if (position === "root" || position === "companion") {
-      lines.push(
-        "- **opentasks__create_task** — create new tasks for the team when you identify additional work"
-      );
-    }
-    lines.push("");
-    lines.push(
-      "After completing a task, mark it completed via opentasks__update_task, then check opentasks__list_tasks for your next assignment."
-    );
-    lines.push("");
-  } else {
-    lines.push("### Task Management");
-    lines.push("");
-    lines.push("Use Claude Code's native task tools:");
-    lines.push(
-      "- **TaskList** — check available tasks and their status"
-    );
-    lines.push(
-      "- **TaskUpdate** — claim tasks (set owner to your name), update status to in_progress or completed"
-    );
-    if (position === "root" || position === "companion") {
-      lines.push(
-        "- **TaskCreate** — create new tasks for the team when you identify additional work"
-      );
-    }
-    lines.push("");
-    lines.push(
-      "After completing a task, mark it completed with TaskUpdate, then check TaskList for your next assignment."
-    );
-    lines.push("");
-  }
-
-  // Memory section (minimem)
-  if (minimemEnabled) {
-    lines.push("### Memory");
-    lines.push("");
-    lines.push("Use **minimem MCP tools** to recall and store knowledge:");
-    lines.push("- **minimem__memory_search** — search past decisions, context, patterns");
-    lines.push("- **minimem__memory_get_details** — get full text for a search result");
-    lines.push("- **minimem__knowledge_search** — search with domain/entity filters");
-    lines.push("");
-    lines.push("Before starting major work, search memory for relevant prior context.");
-    lines.push("");
-  }
-
-  // Skills section (skill-tree loadout)
+  // Skills section (skill-tree loadout — role-specific content, kept separate)
   if (skillLoadout) {
     lines.push("## Skills");
     lines.push("");
@@ -243,15 +180,22 @@ export function generateAgentMd({
     lines.push("");
   }
 
-  // Optional MAP note
-  lines.push("### External Observability (MAP)");
-  lines.push("");
-  lines.push(
-    "If MAP is enabled, lifecycle events are automatically emitted for external dashboards."
-  );
-  lines.push(
-    "You do not need to interact with MAP directly — it is handled by hooks."
-  );
+  // Unified capabilities context (shared with main agent)
+  lines.push(buildCapabilitiesContext({
+    role: roleName,
+    teamName,
+    opentasksEnabled,
+    opentasksStatus: opentasksStatus || (opentasksEnabled ? "enabled" : "disabled"),
+    minimemEnabled,
+    minimemStatus: minimemStatus || (minimemEnabled ? "ready" : "disabled"),
+    skilltreeEnabled,
+    skilltreeStatus: skilltreeStatus || (skilltreeEnabled ? "ready" : "disabled"),
+    inboxEnabled,
+    meshEnabled,
+    mapEnabled,
+    mapStatus: mapStatus || "disabled",
+    sessionlogSync: sessionlogSync || "off",
+  }));
 
   return lines.join("\n") + "\n";
 }
@@ -331,7 +275,16 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
         skillContent: roleSkill.content,
         manifest,
         opentasksEnabled: options.opentasksEnabled,
+        opentasksStatus: options.opentasksStatus,
         minimemEnabled: options.minimemEnabled,
+        minimemStatus: options.minimemStatus,
+        skilltreeEnabled: options.skilltreeEnabled,
+        skilltreeStatus: options.skilltreeStatus,
+        inboxEnabled: options.inboxEnabled,
+        meshEnabled: options.meshEnabled,
+        mapEnabled: options.mapEnabled,
+        mapStatus: options.mapStatus,
+        sessionlogSync: options.sessionlogSync,
         skillLoadout: skillLoadouts[roleName] || "",
       });
 
@@ -377,7 +330,16 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
         description: `${roleName} agent in the ${manifest.name} team`,
         tools: fallbackTools,
         opentasksEnabled: options.opentasksEnabled,
+        opentasksStatus: options.opentasksStatus,
         minimemEnabled: options.minimemEnabled,
+        minimemStatus: options.minimemStatus,
+        skilltreeEnabled: options.skilltreeEnabled,
+        skilltreeStatus: options.skilltreeStatus,
+        inboxEnabled: options.inboxEnabled,
+        meshEnabled: options.meshEnabled,
+        mapEnabled: options.mapEnabled,
+        mapStatus: options.mapStatus,
+        sessionlogSync: options.sessionlogSync,
         skillLoadout: skillLoadouts[roleName] || "",
         skillContent: prompt
           ? `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.\n\n## Instructions\n\n${prompt}`

@@ -95,8 +95,8 @@ describe("integration: agent generation with opentasks disabled", () => {
     // In fallback mode all roles get TaskCreate in the tools list
     expect(workerFrontmatter).toContain("TaskCreate");
 
-    // Body should mention native task tools
-    expect(workerMd).toContain("Claude Code's native task tools");
+    // Body should mention native task tools in capabilities
+    expect(workerMd).toContain("Claude Code native task tools");
   });
 
   it("root and companion roles include TaskCreate in determineTools", async () => {
@@ -237,20 +237,20 @@ describe("integration: native task hook → MAP bridge events", () => {
 // ── 4. Context output with opentasks ─────────────────────────────────────────────
 
 describe("integration: context output with opentasks", () => {
-  it("formatBootstrapContext mentions opentasks MCP tools when connected", async () => {
+  it("formatBootstrapContext mentions opentasks MCP tools when enabled and connected", async () => {
     const { formatBootstrapContext } = await import("../context-output.mjs");
 
     const output = formatBootstrapContext({
       template: "gsd",
+      opentasksEnabled: true,
       opentasksStatus: "connected",
     });
 
-    expect(output).toContain("Opentasks: connected");
     expect(output).toContain("opentasks MCP tools");
     expect(output).toContain("opentasks__create_task");
   });
 
-  it("formatBootstrapContext does not mention opentasks tools when not connected", async () => {
+  it("formatBootstrapContext does not mention opentasks tools when not enabled", async () => {
     const { formatBootstrapContext } = await import("../context-output.mjs");
 
     const output = formatBootstrapContext({
@@ -261,21 +261,21 @@ describe("integration: context output with opentasks", () => {
     expect(output).not.toContain("opentasks__create_task");
   });
 
-  it("formatTeamLoadedContext mentions opentasks when connected", async () => {
+  it("formatTeamLoadedContext mentions opentasks when enabled and connected", async () => {
     const { formatTeamLoadedContext } = await import("../context-output.mjs");
 
     const output = formatTeamLoadedContext(
       "/tmp/agents",
       "/tmp/template",
       "gsd",
-      { opentasksStatus: "connected" },
+      { opentasksEnabled: true, opentasksStatus: "connected" },
     );
 
     expect(output).toContain("opentasks MCP tools");
     expect(output).toContain("opentasks__create_task");
   });
 
-  it("formatTeamLoadedContext mentions native task tools when opentasks not connected", async () => {
+  it("formatTeamLoadedContext mentions native task tools when opentasks not enabled", async () => {
     const { formatTeamLoadedContext } = await import("../context-output.mjs");
 
     const output = formatTeamLoadedContext(
@@ -284,16 +284,17 @@ describe("integration: context output with opentasks", () => {
       "gsd",
     );
 
-    expect(output).toContain("Claude Code's native team features");
-    expect(output).toContain("TaskCreate/TaskUpdate");
+    expect(output).toContain("Claude Code native task tools");
+    expect(output).toContain("TaskCreate");
     expect(output).not.toContain("opentasks MCP tools");
   });
 
-  it("formatBootstrapContext with opentasksStatus 'enabled' also shows opentasks tools", async () => {
+  it("formatBootstrapContext with opentasksEnabled and status 'enabled' shows opentasks tools", async () => {
     const { formatBootstrapContext } = await import("../context-output.mjs");
 
     const output = formatBootstrapContext({
       template: "gsd",
+      opentasksEnabled: true,
       opentasksStatus: "enabled",
     });
 

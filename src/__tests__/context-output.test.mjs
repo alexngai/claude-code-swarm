@@ -20,29 +20,28 @@ describe("context-output", () => {
       expect(out).toContain("No team template configured");
     });
 
-    it("includes MAP status when mapStatus is provided", () => {
-      const out = formatBootstrapContext({ template: "t", mapStatus: "connected" });
+    it("includes MAP status when mapEnabled and mapStatus provided", () => {
+      const out = formatBootstrapContext({ template: "t", mapEnabled: true, mapStatus: "connected (scope: swarm:t)" });
       expect(out).toContain("MAP: connected");
     });
 
-    it("omits MAP line when mapStatus is null", () => {
-      const out = formatBootstrapContext({ template: "t", mapStatus: null });
-      expect(out).not.toContain("MAP:");
+    it("shows no observability when MAP is disabled", () => {
+      const out = formatBootstrapContext({ template: "t", mapEnabled: false });
+      expect(out).toContain("No external observability configured");
     });
 
-    it("shows sessionlog active with sync label", () => {
+    it("shows sessionlog sync level when MAP enabled and sync is not off", () => {
       const out = formatBootstrapContext({
-        template: "t", sessionlogStatus: "active", sessionlogSync: "full",
+        template: "t", mapEnabled: true, mapStatus: "connected", sessionlogStatus: "active", sessionlogSync: "full",
       });
-      expect(out).toContain("Sessionlog: active (MAP sync: full)");
+      expect(out).toContain("trajectory checkpoints synced to MAP (level: full)");
     });
 
-    it("shows sessionlog active without sync label when sync is off", () => {
+    it("omits sessionlog sync when sync is off", () => {
       const out = formatBootstrapContext({
-        template: "t", sessionlogStatus: "active", sessionlogSync: "off",
+        template: "t", mapEnabled: true, mapStatus: "connected", sessionlogStatus: "active", sessionlogSync: "off",
       });
-      expect(out).toContain("Sessionlog: active");
-      expect(out).not.toContain("MAP sync:");
+      expect(out).not.toContain("trajectory checkpoints");
     });
 
     it("shows sessionlog WARNING when status is not active", () => {
@@ -92,9 +91,9 @@ describe("context-output", () => {
       expect(out).toContain("/my/template");
     });
 
-    it("includes coordination section", () => {
+    it("includes capabilities section with task and communication tools", () => {
       const out = formatTeamLoadedContext(tmpDir, "/t", "test");
-      expect(out).toContain("Coordination");
+      expect(out).toContain("Swarm Capabilities");
       expect(out).toContain("TaskCreate");
       expect(out).toContain("SendMessage");
     });

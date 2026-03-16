@@ -102,34 +102,12 @@ When all work is complete:
 
 - **You are the only agent that can spawn teammates** — do not instruct agents to spawn other agents
 - **openteams is config-only** — used only for artifact generation, NOT for runtime coordination
-- **Use Claude Code native teams** for all runtime: `TeamCreate`, `TaskCreate`, `TaskUpdate`, `SendMessage`
 - All agents must be spawned with `team_name` so they share the team's task list
-- If MAP is enabled in `.swarm/claude-swarm/config.json`, lifecycle events are handled automatically by hooks
 - Start with the most critical roles first — you don't need to spawn all roles from the topology at once
 - Keep team size manageable (3-5 agents) — spawn more only when genuinely needed
 
-## When minimem is enabled
+## Capabilities
 
-If minimem is configured (check init context for "Memory: ready"):
-- All agents have access to **minimem MCP tools** for searching and storing memories
-- Use `minimem__memory_search` to find relevant past decisions, patterns, and context
-- Use `minimem__knowledge_search` to search with domain or entity filters
-- Memories are shared team-wide — all agents search the same memory store
-- Instruct agents to search memory before starting major work for relevant prior context
+Refer to the **Swarm Capabilities** section in the session init context for which tools and integrations are active (task management, memory, communication, observability). The capabilities context is also embedded in each spawned agent's prompt — all agents share the same understanding of available tools.
 
-## When skill-tree is enabled
-
-If skill-tree is configured (check init context for "Skills: ready"):
-- Per-role skill loadouts are compiled from the team.yaml `skilltree:` extension and embedded in agent prompts
-- Agents receive their role-appropriate skills automatically in their AGENT.md — no runtime action needed
-- Skills are cached per template alongside other artifacts
-- To update loadouts, delete the template cache directory and reload
-
-## When opentasks is enabled
-
-If opentasks is configured (check init context for "Opentasks: connected"):
-- Use **opentasks MCP tools** instead of native `TaskCreate`/`TaskUpdate`/`TaskList`
-- `opentasks__create_task` to create tasks
-- `opentasks__update_task` to assign and update status
-- `opentasks__list_tasks` to check progress
-- Native task tools may be unavailable — opentasks provides richer task management (links, annotations, cross-provider queries)
+When creating tasks and coordinating agents, use the task tools described in Swarm Capabilities (opentasks MCP tools if opentasks is enabled, native TaskCreate/TaskUpdate otherwise).

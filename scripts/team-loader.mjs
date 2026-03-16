@@ -20,16 +20,11 @@ import {
 } from "../src/context-output.mjs";
 
 const argTemplate = process.argv[2] || "";
+const config = readConfig();
 
 // ── Determine template name ─────────────────────────────────────────────────
 
-let templateName = argTemplate;
-
-// Fall back to config file
-if (!templateName) {
-  const config = readConfig();
-  templateName = config.template;
-}
+let templateName = argTemplate || config.template;
 
 // If no template, show available templates
 if (!templateName) {
@@ -55,4 +50,16 @@ if (!result.success) {
 
 // ── Output context ──────────────────────────────────────────────────────────
 
-process.stdout.write(formatTeamLoadedContext(result.outputDir, result.templatePath, result.teamName));
+process.stdout.write(formatTeamLoadedContext(result.outputDir, result.templatePath, result.teamName, {
+  opentasksEnabled: config.opentasks?.enabled,
+  opentasksStatus: config.opentasks?.enabled ? "enabled" : "disabled",
+  minimemEnabled: config.minimem?.enabled,
+  minimemStatus: config.minimem?.enabled ? "ready" : "disabled",
+  skilltreeEnabled: config.skilltree?.enabled,
+  skilltreeStatus: config.skilltree?.enabled ? "ready" : "disabled",
+  inboxEnabled: config.inbox?.enabled,
+  meshEnabled: config.mesh?.enabled,
+  mapEnabled: config.map?.enabled,
+  mapStatus: config.map?.enabled ? "enabled" : "disabled",
+  sessionlogSync: config.sessionlog?.sync || "off",
+}));

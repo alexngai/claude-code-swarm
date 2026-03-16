@@ -41,6 +41,7 @@ export { formatInboxAsMarkdown, formatAge } from "./inbox.mjs";
 
 // Context output
 export {
+  buildCapabilitiesContext,
   formatBootstrapContext,
   formatTeamLoadedContext,
   formatNoTemplateMessage,

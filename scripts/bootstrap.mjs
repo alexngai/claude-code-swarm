@@ -37,11 +37,18 @@ try {
   const output = formatBootstrapContext({
     template: result.template,
     team: result.team,
+    mapEnabled: result.mapEnabled,
     mapStatus: result.mapEnabled ? result.mapStatus : null,
     sessionlogStatus: result.sessionlogEnabled ? result.sessionlogStatus : null,
     sessionlogSync: result.sessionlogSync,
-    opentasksStatus: result.opentasksEnabled ? result.opentasksStatus : null,
+    opentasksEnabled: result.opentasksEnabled,
+    opentasksStatus: result.opentasksStatus,
     inboxEnabled: result.inboxEnabled,
+    meshEnabled: result.meshEnabled,
+    minimemEnabled: result.minimemEnabled,
+    minimemStatus: result.minimemStatus,
+    skilltreeEnabled: result.skilltreeEnabled,
+    skilltreeStatus: result.skilltreeStatus,
   });
   process.stdout.write(output);
 } catch (err) {
