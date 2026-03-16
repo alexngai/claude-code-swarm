@@ -12,6 +12,7 @@ import { createRequire } from "module";
 import { getGlobalNodeModules } from "./swarmkit-resolver.mjs";
 import { teamDir } from "./paths.mjs";
 import { writeRoles } from "./roles.mjs";
+import { readConfig } from "./config.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -119,7 +120,7 @@ export function readTeamManifest(templatePath) {
  * Returns { success, templateName, templatePath, outputDir, teamName, cached, error? }.
  * Returns { success: false } if template not found or generation fails.
  */
-export function loadTeam(templateName) {
+export async function loadTeam(templateName) {
   const templatePath = resolveTemplatePath(templateName);
   if (!templatePath) {
     return { success: false, templateName, error: `Template '${templateName}' not found` };
@@ -145,6 +146,24 @@ export function loadTeam(templateName) {
     teamName = manifest.name || teamName;
   } catch {
     // Use template name as fallback
+  }
+
+  // Compile skill-tree loadouts if enabled (cached alongside template artifacts)
+  const config = readConfig();
+  if (config.skilltree?.enabled) {
+    const loadoutsPath = path.join(outputDir, "skill-loadouts.json");
+    if (!fs.existsSync(loadoutsPath)) {
+      try {
+        const { compileAllRoleLoadouts } = await import("./skilltree-client.mjs");
+        const manifest = readTeamManifest(templatePath);
+        const loadouts = await compileAllRoleLoadouts(manifest, config.skilltree);
+        if (Object.keys(loadouts).length > 0) {
+          fs.writeFileSync(loadoutsPath, JSON.stringify(loadouts, null, 2), "utf-8");
+        }
+      } catch (err) {
+        process.stderr.write(`[template] Warning: skill loadout compilation failed: ${err.message}\n`);
+      }
+    }
   }
 
   return { success: true, templateName, templatePath, outputDir, teamName, cached };

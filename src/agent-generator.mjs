@@ -89,6 +89,8 @@ export function generateAgentMd({
   skillContent,
   manifest,
   opentasksEnabled,
+  minimemEnabled,
+  skillLoadout,
 }) {
   const lines = [];
 
@@ -220,6 +222,27 @@ export function generateAgentMd({
     lines.push("");
   }
 
+  // Memory section (minimem)
+  if (minimemEnabled) {
+    lines.push("### Memory");
+    lines.push("");
+    lines.push("Use **minimem MCP tools** to recall and store knowledge:");
+    lines.push("- **minimem__memory_search** — search past decisions, context, patterns");
+    lines.push("- **minimem__memory_get_details** — get full text for a search result");
+    lines.push("- **minimem__knowledge_search** — search with domain/entity filters");
+    lines.push("");
+    lines.push("Before starting major work, search memory for relevant prior context.");
+    lines.push("");
+  }
+
+  // Skills section (skill-tree loadout)
+  if (skillLoadout) {
+    lines.push("## Skills");
+    lines.push("");
+    lines.push(skillLoadout);
+    lines.push("");
+  }
+
   // Optional MAP note
   lines.push("### External Observability (MAP)");
   lines.push("");
@@ -256,6 +279,15 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
     generateAllRoleSkillMds = openteams.generateAllRoleSkillMds;
   } catch {
     TemplateLoader = null;
+  }
+
+  // Load skill loadouts if available (compiled by skilltree-client during team loading)
+  let skillLoadouts = {};
+  const loadoutsPath = path.join(absOutputDir, "..", "skill-loadouts.json");
+  if (fs.existsSync(loadoutsPath)) {
+    try {
+      skillLoadouts = JSON.parse(fs.readFileSync(loadoutsPath, "utf-8"));
+    } catch { /* ignore */ }
   }
 
   const generatedRoles = [];
@@ -299,6 +331,8 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
         skillContent: roleSkill.content,
         manifest,
         opentasksEnabled: options.opentasksEnabled,
+        minimemEnabled: options.minimemEnabled,
+        skillLoadout: skillLoadouts[roleName] || "",
       });
 
       const agentDir = path.join(absOutputDir, roleName);
@@ -343,6 +377,8 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
         description: `${roleName} agent in the ${manifest.name} team`,
         tools: fallbackTools,
         opentasksEnabled: options.opentasksEnabled,
+        minimemEnabled: options.minimemEnabled,
+        skillLoadout: skillLoadouts[roleName] || "",
         skillContent: prompt
           ? `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.\n\n## Instructions\n\n${prompt}`
           : `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.`,

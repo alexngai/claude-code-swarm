@@ -40,7 +40,7 @@ if (!templateName) {
 
 // ── Load team (resolve, generate/cache, write roles.json) ─────────────────
 
-const result = loadTeam(templateName);
+const result = await loadTeam(templateName);
 
 if (!result.success) {
   if (!result.templatePath) {

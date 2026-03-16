@@ -18,6 +18,8 @@ export function formatBootstrapContext({
   sessionlogSync,
   opentasksStatus,
   inboxEnabled,
+  minimemStatus,
+  skilltreeStatus,
 }) {
   const lines = ["## Claude Code Swarm", ""];
 
@@ -52,6 +54,17 @@ export function formatBootstrapContext({
 
   if (inboxEnabled) {
     lines.push("Inbox: enabled (agent-inbox messaging)");
+  }
+
+  if (minimemStatus && minimemStatus !== "disabled") {
+    lines.push(`Memory: ${minimemStatus}`);
+    if (minimemStatus === "ready") {
+      lines.push("Use **minimem MCP tools** (minimem__memory_search, minimem__knowledge_search) to recall past decisions and context.");
+    }
+  }
+
+  if (skilltreeStatus && skilltreeStatus !== "disabled") {
+    lines.push(`Skills: ${skilltreeStatus} (per-role loadouts from team.yaml)`);
   }
 
   lines.push("");

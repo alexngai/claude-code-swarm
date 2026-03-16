@@ -12,6 +12,8 @@ This plugin bridges [openteams](https://github.com/alexngai/openteams) team temp
 4. **`/swarm` skill** (`skills/swarm/SKILL.md`) — User-invocable skill to select a template, create a native Claude Code team via `TeamCreate`, and spawn a coordinator agent
 5. **Agent generator** (`scripts/generate-agents.mjs`) — Converts openteams YAML templates into Claude Code AGENT.md files with native team tool instructions
 6. **Team loader** (`scripts/team-loader.mjs`) — Resolves templates, generates artifacts (with per-template caching), writes roles.json for MAP hook integration
+7. **minimem integration** (MCP server) — Optional agent memory with semantic search. Registered as an MCP server; agents use memory tools to recall past decisions and context
+8. **skill-tree integration** (`src/skilltree-client.mjs`) — Optional per-role skill loadouts compiled from team.yaml `skilltree:` extension and embedded in AGENT.md files at generation time
 
 ## Plugin structure
 
@@ -31,6 +33,7 @@ claude-code-swarm/
 │   ├── sidecar-server.mjs        # UNIX socket server + command handler
 │   ├── map-events.mjs            # Event builders + emit (sidecar → fallback)
 │   ├── opentasks-client.mjs      # OpenTasks daemon IPC client (socket discovery, task CRUD, sync)
+│   ├── skilltree-client.mjs     # Skill-tree loadout compilation (per-role, cached)
 │   ├── sessionlog.mjs            # Session detection, trajectory checkpoints, sync
 │   ├── template.mjs              # Template resolution + openteams generation
 │   ├── agent-generator.mjs       # AGENT.md generation (tools, frontmatter)
@@ -144,6 +147,61 @@ When both MAP and sessionlog are active, the plugin bridges sessionlog's session
 
 Requires sessionlog to be installed and active independently (`sessionlog enable`).
 
+### With minimem (agent memory)
+```json
+{
+  "template": "gsd",
+  "minimem": {
+    "enabled": true,
+    "provider": "auto"
+  }
+}
+```
+
+When enabled, the plugin registers a minimem MCP server that agents can use for semantic memory search (`memory_search`, `memory_get_details`, `knowledge_search`, `knowledge_graph`, `knowledge_path`). Memories are stored as Markdown files in `.swarm/minimem/` and indexed with vector embeddings + BM25 hybrid search. Memory is shared team-wide — all agents search the same store.
+
+Minimem options:
+- `enabled` — Enable minimem integration (default: `false`)
+- `provider` — Embedding provider: `openai`, `gemini`, `local`, `auto`, `none` (default: `auto`)
+- `global` — Also search the user's global memory store at `~/.minimem` (default: `false`)
+- `dir` — Custom memory directory path (default: `.swarm/minimem/`)
+
+### With skill-tree (per-role skill loadouts)
+```json
+{
+  "template": "gsd",
+  "skilltree": {
+    "enabled": true,
+    "defaultProfile": "implementation"
+  }
+}
+```
+
+When enabled, the plugin compiles per-role skill loadouts from the team.yaml `skilltree:` extension namespace and embeds them in each agent's AGENT.md at generation time. Skills are cached per template alongside other artifacts.
+
+Define per-role loadouts in team.yaml:
+```yaml
+skilltree:
+  defaults:
+    profile: implementation
+    maxSkills: 6
+  roles:
+    orchestrator:
+      profile: code-review
+    executor:
+      profile: implementation
+      tags: [development]
+    verifier:
+      profile: testing
+    debugger:
+      profile: debugging
+```
+
+Skill-tree options:
+- `enabled` — Enable skill-tree integration (default: `false`)
+- `basePath` — Path to skill-tree storage directory (default: `.swarm/skill-tree/`)
+- `defaultProfile` — Default profile when no role-specific criteria exist (default: `""`)
+
 ### Available templates
 
 Templates are provided by the openteams package (installed via swarmkit). Built-in templates include:
@@ -178,6 +236,13 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `opentasks.scope` | `SWARM_OPENTASKS_SCOPE` | string | `""` |
 | `sessionlog.enabled` | `SWARM_SESSIONLOG_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `sessionlog.sync` | `SWARM_SESSIONLOG_SYNC` | string | `off` |
+| `minimem.enabled` | `SWARM_MINIMEM_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
+| `minimem.provider` | `SWARM_MINIMEM_PROVIDER` | string | `auto` |
+| `minimem.global` | `SWARM_MINIMEM_GLOBAL` | boolean (`true`/`1`/`yes`) | `false` |
+| `minimem.dir` | `SWARM_MINIMEM_DIR` | string | `""` |
+| `skilltree.enabled` | `SWARM_SKILLTREE_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
+| `skilltree.basePath` | `SWARM_SKILLTREE_BASE_PATH` | string | `""` |
+| `skilltree.defaultProfile` | `SWARM_SKILLTREE_DEFAULT_PROFILE` | string | `""` |
 
 MAP is implicitly enabled when `map.server` is configured (in file or via `SWARM_MAP_SERVER`). Use `SWARM_MAP_ENABLED=false` to explicitly disable.
 
@@ -287,6 +352,7 @@ src/sidecar-client.mjs     ← sendToSidecar(), ensureSidecar(), startSidecar()
 src/sidecar-server.mjs     ← createSocketServer(), createCommandHandler()
 src/map-events.mjs         ← sendCommand(), emitPayload(), build*Command(), handle*Event()
 src/opentasks-client.mjs   ← createTask(), updateTask(), pushSyncEvent(), findSocketPath()
+src/skilltree-client.mjs   ← parseSkillTreeExtension(), compileRoleLoadout(), compileAllRoleLoadouts()
 src/sessionlog.mjs         ← findActiveSession(), buildTrajectoryCheckpoint(), syncSessionlog()
 src/template.mjs           ← resolveTemplatePath(), listAvailableTemplates(), generateTeamArtifacts()
 src/agent-generator.mjs    ← generateAllAgents(), generateAgentMd()
@@ -305,6 +371,8 @@ Global (managed by swarmkit, installed on demand during bootstrap):
 - **openteams** — team topology parsing and artifact generation (always installed)
 - **@multi-agent-protocol/sdk** — MAP protocol client (installed when `map.enabled: true`)
 - **sessionlog** — git-integrated session capture (installed when `sessionlog.enabled: true`)
+- **minimem** — file-based memory with vector search (installed when `minimem.enabled: true`)
+- **skill-tree** — versioned skill library with serving layer (installed when `skilltree.enabled: true`)
 
 Runtime:
 - **Claude Code agent teams** — enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings.json

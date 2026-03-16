@@ -95,6 +95,17 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
         trust: project.inbox?.federation?.trust ?? global.inbox?.federation?.trust ?? undefined,
       },
     },
+    minimem: {
+      enabled: envBool("SWARM_MINIMEM_ENABLED") ?? Boolean(project.minimem?.enabled ?? global.minimem?.enabled),
+      provider: envStr("SWARM_MINIMEM_PROVIDER") ?? project.minimem?.provider ?? global.minimem?.provider ?? "auto",
+      global: envBool("SWARM_MINIMEM_GLOBAL") ?? Boolean(project.minimem?.global ?? global.minimem?.global),
+      dir: envStr("SWARM_MINIMEM_DIR") ?? project.minimem?.dir ?? global.minimem?.dir ?? "",
+    },
+    skilltree: {
+      enabled: envBool("SWARM_SKILLTREE_ENABLED") ?? Boolean(project.skilltree?.enabled ?? global.skilltree?.enabled),
+      basePath: envStr("SWARM_SKILLTREE_BASE_PATH") ?? project.skilltree?.basePath ?? global.skilltree?.basePath ?? "",
+      defaultProfile: envStr("SWARM_SKILLTREE_DEFAULT_PROFILE") ?? project.skilltree?.defaultProfile ?? global.skilltree?.defaultProfile ?? "",
+    },
   };
 }
 

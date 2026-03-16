@@ -115,5 +115,12 @@ export {
   pushSyncEvent,
 } from "./opentasks-client.mjs";
 
+// Skill-tree client
+export {
+  parseSkillTreeExtension,
+  compileRoleLoadout,
+  compileAllRoleLoadouts,
+} from "./skilltree-client.mjs";
+
 // Bootstrap
 export { bootstrap } from "./bootstrap.mjs";

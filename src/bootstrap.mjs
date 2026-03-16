@@ -58,6 +58,12 @@ function getRequiredGlobalPackages(config) {
   if (config.inbox?.enabled) {
     packages.push("agent-inbox");
   }
+  if (config.minimem?.enabled) {
+    packages.push("minimem");
+  }
+  if (config.skilltree?.enabled) {
+    packages.push("skill-tree");
+  }
   return packages;
 }
 
@@ -162,6 +168,24 @@ async function initSwarmProject(config) {
     }
   }
 
+  // Init minimem project dir (.swarm/minimem/) if enabled
+  if (config.minimem?.enabled && !swarmkit.isProjectInit(cwd, "minimem")) {
+    try {
+      await swarmkit.initProjectPackage("minimem", ctx);
+    } catch {
+      // best-effort
+    }
+  }
+
+  // Init skill-tree project dir (.swarm/skill-tree/) if enabled
+  if (config.skilltree?.enabled && !swarmkit.isProjectInit(cwd, "skill-tree")) {
+    try {
+      await swarmkit.initProjectPackage("skill-tree", ctx);
+    } catch {
+      // best-effort
+    }
+  }
+
   // Init claude-code-swarm project dir (.swarm/claude-swarm/)
   if (!swarmkit.isProjectInit(cwd, "claude-code-swarm")) {
     try {
@@ -254,7 +278,7 @@ export async function bootstrap(pluginDirOverride, sessionId) {
   let team = null;
   if (config.template) {
     try {
-      const result = loadTeam(config.template);
+      const result = await loadTeam(config.template);
       if (result.success) {
         team = result;
       } else {
@@ -307,6 +331,28 @@ export async function bootstrap(pluginDirOverride, sessionId) {
     }
   }
 
+  // 5. Check minimem status if enabled
+  let minimemStatus = "disabled";
+  if (config.minimem?.enabled) {
+    try {
+      execSync("minimem status", { stdio: "pipe", timeout: 5000 });
+      minimemStatus = "ready";
+    } catch {
+      minimemStatus = "installed";
+    }
+  }
+
+  // 6. Check skill-tree status if enabled
+  let skilltreeStatus = "disabled";
+  if (config.skilltree?.enabled) {
+    try {
+      execSync("skill-tree list --json", { stdio: "pipe", timeout: 5000 });
+      skilltreeStatus = "ready";
+    } catch {
+      skilltreeStatus = "installed";
+    }
+  }
+
   return {
     template: config.template,
     team,
@@ -318,6 +364,10 @@ export async function bootstrap(pluginDirOverride, sessionId) {
     opentasksEnabled: config.opentasks?.enabled,
     opentasksStatus,
     inboxEnabled: config.inbox?.enabled,
+    minimemEnabled: config.minimem?.enabled,
+    minimemStatus,
+    skilltreeEnabled: config.skilltree?.enabled,
+    skilltreeStatus,
     sessionId,
   };
 }

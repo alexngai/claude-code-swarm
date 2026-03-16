@@ -108,6 +108,23 @@ When all work is complete:
 - Start with the most critical roles first — you don't need to spawn all roles from the topology at once
 - Keep team size manageable (3-5 agents) — spawn more only when genuinely needed
 
+## When minimem is enabled
+
+If minimem is configured (check init context for "Memory: ready"):
+- All agents have access to **minimem MCP tools** for searching and storing memories
+- Use `minimem__memory_search` to find relevant past decisions, patterns, and context
+- Use `minimem__knowledge_search` to search with domain or entity filters
+- Memories are shared team-wide — all agents search the same memory store
+- Instruct agents to search memory before starting major work for relevant prior context
+
+## When skill-tree is enabled
+
+If skill-tree is configured (check init context for "Skills: ready"):
+- Per-role skill loadouts are compiled from the team.yaml `skilltree:` extension and embedded in agent prompts
+- Agents receive their role-appropriate skills automatically in their AGENT.md — no runtime action needed
+- Skills are cached per template alongside other artifacts
+- To update loadouts, delete the template cache directory and reload
+
 ## When opentasks is enabled
 
 If opentasks is configured (check init context for "Opentasks: connected"):
