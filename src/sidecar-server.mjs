@@ -37,7 +37,13 @@ export function createSocketServer(socketPath, onCommand) {
         if (!line.trim()) continue;
         try {
           const command = JSON.parse(line);
-          onCommand(command, client);
+          // Must await the async handler to catch SDK errors;
+          // without this, rejections become uncaught and crash the process.
+          onCommand(command, client).catch((err) => {
+            process.stderr.write(
+              `[sidecar] Async command error (${command.action}): ${err.message}\n`
+            );
+          });
         } catch (err) {
           process.stderr.write(
             `[sidecar] Invalid command: ${err.message}\n`

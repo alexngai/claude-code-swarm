@@ -101,6 +101,12 @@ process.on("uncaughtException", (err) => {
   process.stderr.write(`[sidecar] Uncaught exception: ${err.message}\n`);
   shutdown();
 });
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  process.stderr.write(`[sidecar] Unhandled rejection: ${msg}\n`);
+  // Don't shutdown — log and continue. The rejection is likely from a
+  // non-critical SDK operation (e.g. scope-based send, state update).
+});
 
 // ── Agent Inbox Setup ───────────────────────────────────────────────────────
 
