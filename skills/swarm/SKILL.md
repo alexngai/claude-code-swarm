@@ -111,3 +111,19 @@ When all work is complete:
 Refer to the **Swarm Capabilities** section in the session init context for which tools and integrations are active (task management, memory, communication, observability). The capabilities context is also embedded in each spawned agent's prompt — all agents share the same understanding of available tools.
 
 When creating tasks and coordinating agents, use the task tools described in Swarm Capabilities (opentasks MCP tools if opentasks is enabled, native TaskCreate/TaskUpdate otherwise).
+
+### When minimem is enabled
+
+If memory is active (check init context for "Memory: ready"):
+- **Before spawning agents**: Search memory for prior context on the user's goal (`minimem__memory_search`). Include relevant findings in agent prompts when spawning.
+- **After team completion**: Store key decisions and outcomes in memory files (`MEMORY.md` for decisions, `memory/<topic>.md` for topic context).
+- Tag stored memories with observation types (`<!-- type: decision -->`) and use domain tags relevant to the template (e.g., "gsd", "backend").
+- Memory is shared team-wide — all agents can search the same store during execution.
+
+### When skill-tree is enabled
+
+If skills are active (check init context for "Per-Role Skills"):
+- Each spawned agent automatically receives a **skill loadout** compiled for their role, embedded in their AGENT.md.
+- Loadouts are configured via the `skilltree:` block in team.yaml, or **auto-inferred** from role names (e.g., "executor" → implementation profile, "debugger" → debugging profile).
+- You don't need to manage skills — they're baked into agent prompts at generation time.
+- Available built-in profiles: code-review, implementation, debugging, security, testing, refactoring, documentation, devops.

@@ -124,6 +124,7 @@ export {
   parseSkillTreeExtension,
   compileRoleLoadout,
   compileAllRoleLoadouts,
+  inferProfileFromRole,
 } from "./skilltree-client.mjs";
 
 // Bootstrap

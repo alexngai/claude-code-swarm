@@ -136,12 +136,48 @@ export async function compileRoleLoadout(roleName, criteria, config) {
 }
 
 /**
+ * Role name → built-in profile auto-mapping.
+ * Used as fallback when no explicit criteria or default profile is configured.
+ */
+const ROLE_PROFILE_MAP = {
+  executor: "implementation",
+  developer: "implementation",
+  "quick-flow-dev": "implementation",
+  debugger: "debugging",
+  verifier: "testing",
+  qa: "testing",
+  "plan-checker": "code-review",
+  "integration-checker": "code-review",
+  "tech-writer": "documentation",
+  architect: "refactoring",
+  "ux-designer": "documentation",
+  "security-auditor": "security",
+};
+
+/**
+ * Infer a skill-tree profile from a role name.
+ * Returns empty string if no match found.
+ */
+export function inferProfileFromRole(roleName) {
+  // Direct match
+  if (ROLE_PROFILE_MAP[roleName]) return ROLE_PROFILE_MAP[roleName];
+
+  // Partial match (e.g., "senior-developer" matches "developer")
+  for (const [pattern, profile] of Object.entries(ROLE_PROFILE_MAP)) {
+    if (roleName.includes(pattern)) return profile;
+  }
+
+  return "";
+}
+
+/**
  * Compile skill loadouts for all roles in a team manifest.
  * Reads the skilltree extension from the manifest, compiles loadouts per role.
+ * Returns metadata alongside content for richer agent context.
  *
  * @param {object} manifest - Parsed team.yaml manifest
  * @param {object} config - Plugin config (skilltree section)
- * @returns {Promise<object>} Map of roleName → loadout markdown
+ * @returns {Promise<object>} Map of roleName → { content, profile }
  */
 export async function compileAllRoleLoadouts(manifest, config) {
   const { defaults, roles: roleOverrides } = parseSkillTreeExtension(manifest);
@@ -152,20 +188,29 @@ export async function compileAllRoleLoadouts(manifest, config) {
     // Merge defaults with role-specific overrides
     const roleCriteria = roleOverrides[roleName]
       ? { ...defaults, ...roleOverrides[roleName] }
-      : defaults;
+      : { ...defaults };
 
-    // Apply config-level default profile as final fallback
+    // Fallback chain for profile selection
     if (!roleCriteria.profile && !roleCriteria.tags && !roleCriteria.include && !roleCriteria.taskDescription) {
       if (config?.defaultProfile) {
         roleCriteria.profile = config.defaultProfile;
       } else {
-        continue; // No criteria at all — skip
+        // Auto-infer from role name
+        const inferred = inferProfileFromRole(roleName);
+        if (inferred) {
+          roleCriteria.profile = inferred;
+        } else {
+          continue; // No criteria at all — skip
+        }
       }
     }
 
     const loadout = await compileRoleLoadout(roleName, roleCriteria, config);
     if (loadout) {
-      result[roleName] = loadout;
+      result[roleName] = {
+        content: loadout,
+        profile: roleCriteria.profile || "",
+      };
     }
   }
 

@@ -92,6 +92,7 @@ export function generateAgentMd({
   opentasksEnabled,
   minimemEnabled,
   skillLoadout,
+  skillProfile,
   // Capabilities context options (passed through to buildCapabilitiesContext)
   opentasksStatus,
   minimemStatus,
@@ -190,6 +191,7 @@ export function generateAgentMd({
     minimemStatus: minimemStatus || (minimemEnabled ? "ready" : "disabled"),
     skilltreeEnabled,
     skilltreeStatus: skilltreeStatus || (skilltreeEnabled ? "ready" : "disabled"),
+    skillProfile: skillProfile || "",
     inboxEnabled,
     meshEnabled,
     mapEnabled,
@@ -226,12 +228,20 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
   }
 
   // Load skill loadouts if available (compiled by skilltree-client during team loading)
+  // Format: { roleName: { content, profile } } (or legacy string format)
   let skillLoadouts = {};
   const loadoutsPath = path.join(absOutputDir, "..", "skill-loadouts.json");
   if (fs.existsSync(loadoutsPath)) {
     try {
       skillLoadouts = JSON.parse(fs.readFileSync(loadoutsPath, "utf-8"));
     } catch { /* ignore */ }
+  }
+  // Helper to extract content and profile from loadout entry (handles both formats)
+  function getLoadout(roleName) {
+    const entry = skillLoadouts[roleName];
+    if (!entry) return { content: "", profile: "" };
+    if (typeof entry === "string") return { content: entry, profile: "" };
+    return { content: entry.content || "", profile: entry.profile || "" };
   }
 
   const generatedRoles = [];
@@ -285,7 +295,8 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
         mapEnabled: options.mapEnabled,
         mapStatus: options.mapStatus,
         sessionlogSync: options.sessionlogSync,
-        skillLoadout: skillLoadouts[roleName] || "",
+        skillLoadout: getLoadout(roleName).content,
+        skillProfile: getLoadout(roleName).profile,
       });
 
       const agentDir = path.join(absOutputDir, roleName);
@@ -340,7 +351,8 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
         mapEnabled: options.mapEnabled,
         mapStatus: options.mapStatus,
         sessionlogSync: options.sessionlogSync,
-        skillLoadout: skillLoadouts[roleName] || "",
+        skillLoadout: getLoadout(roleName).content,
+        skillProfile: getLoadout(roleName).profile,
         skillContent: prompt
           ? `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.\n\n## Instructions\n\n${prompt}`
           : `# Role: ${roleName}\n\nMember of the **${manifest.name}** team.`,

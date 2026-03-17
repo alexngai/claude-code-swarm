@@ -42,6 +42,7 @@ export function buildCapabilitiesContext({
   minimemStatus = "disabled",
   skilltreeEnabled = false,
   skilltreeStatus = "disabled",
+  skillProfile = "",
   inboxEnabled = false,
   meshEnabled = false,
   mapEnabled = false,
@@ -103,17 +104,44 @@ export function buildCapabilitiesContext({
     lines.push("### Memory");
     lines.push("");
     if (minimemStatus === "ready") {
-      lines.push("Use **minimem MCP tools** to recall and store shared team knowledge:");
-      lines.push("- `minimem__memory_search` — search past decisions, context, patterns");
-      lines.push("- `minimem__memory_get_details` — full text for a result");
-      lines.push("- `minimem__knowledge_search` — search with domain/entity filters");
-      lines.push("- `minimem__knowledge_graph` / `minimem__knowledge_path` — explore relationships");
-      lines.push("Search memory before starting major work for relevant prior context.");
-      lines.push("Memory is shared team-wide — all agents see the same store.");
+      lines.push("Use **minimem MCP tools** for persistent, searchable team memory. Memory is shared team-wide.");
+      lines.push("");
+      lines.push("**Searching (two-phase workflow):**");
+      lines.push("1. `minimem__memory_search(query)` — returns compact index (path, score, preview)");
+      lines.push("2. `minimem__memory_get_details(results)` — fetch full text for relevant results");
+      lines.push("Use `detail: \"full\"` for quick lookups. Filter by type: `type: \"decision\"` (decision, bugfix, feature, discovery, context, note).");
+      lines.push("");
+      lines.push("**Knowledge search** (structured metadata):");
+      lines.push("- `minimem__knowledge_search(query, { domain, entities, minConfidence })` — filter by domain/entity/confidence");
+      lines.push("- `minimem__knowledge_graph(nodeId, depth)` — traverse knowledge relationships");
+      lines.push("- `minimem__knowledge_path(fromId, toId)` — find path between knowledge nodes");
+      lines.push("");
+      if (!isAgent) {
+        lines.push("**Storing memories** (use filesystem tools to write Markdown):");
+        lines.push("- `MEMORY.md` — important decisions and architecture notes");
+        lines.push("- `memory/YYYY-MM-DD.md` — daily logs and session notes");
+        lines.push("- `memory/<topic>.md` — topic-specific files");
+        lines.push("");
+        lines.push("Format entries with a type comment for filtered search:");
+        lines.push("```");
+        lines.push("### YYYY-MM-DD HH:MM");
+        lines.push("<!-- type: decision -->");
+        lines.push("<content>");
+        lines.push("```");
+        lines.push("Types: `decision`, `bugfix`, `feature`, `discovery`, `context`, `note`.");
+        lines.push("Wrap secrets in `<private>` tags to exclude from indexing.");
+        lines.push("");
+        lines.push("**Team strategy**: Search memory before spawning agents for prior context on the user's goal. After team completion, store key decisions and outcomes.");
+        lines.push("");
+      } else {
+        lines.push("**Before major work**: Search memory for relevant prior decisions and context.");
+        lines.push("**After completing work**: Store key decisions and findings using filesystem tools — write to `memory/` files with `<!-- type: decision -->` tags.");
+        lines.push("");
+      }
     } else {
       lines.push(`Memory: ${minimemStatus} (minimem installed but not fully ready).`);
+      lines.push("");
     }
-    lines.push("");
   }
 
   // ── Per-Role Skills (skill-tree) ─────────────────────────────────────
@@ -121,9 +149,17 @@ export function buildCapabilitiesContext({
     lines.push("### Per-Role Skills");
     lines.push("");
     if (isAgent) {
-      lines.push("Skill loadouts from team.yaml are compiled per-role and embedded in your prompt above.");
+      lines.push("Your **skill loadout** is embedded in the `## Skills` section above. These are versioned, reusable patterns selected for your role.");
+      if (skillProfile) {
+        lines.push(`Your loadout was compiled from the **${skillProfile}** profile.`);
+      }
+      lines.push("Read and apply these skills to guide your approach — they represent proven patterns for your type of work.");
     } else {
-      lines.push("Skill loadouts from team.yaml are compiled per-role and embedded in each agent's prompt at generation time.");
+      lines.push("Each spawned agent receives a **skill loadout** compiled per-role and embedded in their AGENT.md.");
+      lines.push("Skills are versioned, reusable patterns from the skill-tree library, selected based on role profiles.");
+      lines.push("");
+      lines.push("Loadouts are configured via the `skilltree:` block in team.yaml, or auto-inferred from role names.");
+      lines.push("Built-in profiles: **code-review**, **implementation**, **debugging**, **security**, **testing**, **refactoring**, **documentation**, **devops**.");
       lines.push("Skills are cached per template — delete the template cache to refresh.");
     }
     lines.push("");
