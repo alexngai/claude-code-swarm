@@ -181,6 +181,23 @@ export function generateAgentMd({
     lines.push("");
   }
 
+  // Agent inbox identity (embedded per-agent so each agent knows its inbox ID)
+  if (inboxEnabled) {
+    const agentInboxId = `${teamName}-${roleName}`;
+    lines.push("## Your Agent Inbox Identity");
+    lines.push("");
+    lines.push(`Your inbox ID is **${agentInboxId}**. Use this with agent-inbox MCP tools:`);
+    lines.push("");
+    lines.push(`- Check your inbox: \`agent-inbox__check_inbox(agentId: "${agentInboxId}")\``);
+    lines.push(`- Send messages: \`agent-inbox__send_message(from: "${agentInboxId}", to: "<recipient>", body: "...")\``);
+    lines.push(`- Read threads: \`agent-inbox__read_thread(threadTag: "...")\``);
+    lines.push("- List agents: `agent-inbox__list_agents()`");
+    lines.push("");
+    lines.push("Check your inbox periodically for messages from teammates and external systems.");
+    lines.push("Use `agent@system` addressing for cross-system (federated) messages.");
+    lines.push("");
+  }
+
   // Unified capabilities context (shared with main agent)
   lines.push(buildCapabilitiesContext({
     role: roleName,

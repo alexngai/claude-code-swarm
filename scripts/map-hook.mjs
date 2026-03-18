@@ -72,10 +72,14 @@ async function handleInject() {
 
   if (!config.inbox?.enabled) return;
 
-  // Read from agent-inbox IPC
+  // Only check messages addressed to the main agent (not all scope messages).
+  // Per-agent messages stay in storage for agents to pull via MCP tools.
+  const teamName = resolveTeamName(config);
+  const mainAgentId = `${teamName}-main`;
   const scope = config.map?.scope || "default";
+
   const resp = await sendToInbox(
-    { action: "check_inbox", scope, clear: true },
+    { action: "check_inbox", agentId: mainAgentId, scope, unreadOnly: true, clear: true },
     sPaths.inboxSocketPath
   );
   if (!resp || !resp.ok || !resp.messages?.length) return;

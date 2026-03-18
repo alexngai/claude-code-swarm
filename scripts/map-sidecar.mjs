@@ -244,6 +244,25 @@ async function main() {
     await startWebSocketTransport();
   }
 
+  // Subscribe to inbox message.created events for outbound MAP observability
+  if (inboxInstance?.events && connection) {
+    inboxInstance.events.on("message.created", (message) => {
+      // Emit message event to MAP for external observability (Flows B, E)
+      connection.send({ scope: MAP_SCOPE }, {
+        type: "inbox.message",
+        messageId: message.id,
+        from: message.sender_id,
+        to: (message.recipients || []).map((r) => r.agent_id),
+        contentType: message.content?.type || "text",
+        threadTag: message.thread_tag,
+        importance: message.importance,
+      }, { relationship: "broadcast" }).catch(() => {
+        // Best-effort — don't block on MAP delivery
+      });
+    });
+    process.stderr.write("[sidecar] Subscribed to inbox message.created events for MAP bridge\n");
+  }
+
   // Start lifecycle UNIX socket server
   const onCommand = createCommandHandler(connection, MAP_SCOPE, registeredAgents, {
     inboxInstance,

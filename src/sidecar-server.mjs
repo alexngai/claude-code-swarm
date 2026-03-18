@@ -176,6 +176,21 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
                 metadata,
               });
               registeredAgents.set(agentId, { name, role, metadata });
+
+              // Also register in inbox storage for message routing
+              if (inboxInstance?.storage) {
+                try {
+                  inboxInstance.storage.putAgent({
+                    agent_id: agentId,
+                    scope,
+                    status: "active",
+                    metadata: { name, role, ...metadata },
+                    registered_at: new Date().toISOString(),
+                    last_active_at: new Date().toISOString(),
+                  });
+                } catch { /* best-effort */ }
+              }
+
               respond(client, { ok: true, agent: result });
             } catch (err) {
               process.stderr.write(
@@ -232,6 +247,21 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
             } catch {
               // Agent may already be gone
             }
+
+            // Also update inbox storage
+            if (inboxInstance?.storage) {
+              try {
+                inboxInstance.storage.putAgent({
+                  agent_id: agentId,
+                  scope,
+                  status: "disconnected",
+                  metadata: {},
+                  registered_at: new Date().toISOString(),
+                  last_active_at: new Date().toISOString(),
+                });
+              } catch { /* best-effort */ }
+            }
+
             registeredAgents.delete(agentId);
           }
           respond(client, { ok: true });

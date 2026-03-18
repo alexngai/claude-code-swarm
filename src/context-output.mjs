@@ -88,11 +88,19 @@ export function buildCapabilitiesContext({
   // ── Communication ────────────────────────────────────────────────────
   lines.push("### Communication");
   lines.push("");
-  lines.push("Use `SendMessage` for agent-to-agent messaging:");
+  lines.push("Use `SendMessage` for quick same-team agent-to-agent messaging:");
   lines.push("- Direct: `SendMessage(recipient=\"<agent-name>\", content=\"...\")`");
   lines.push("- Broadcast only when truly necessary (messages every teammate).");
+  lines.push("");
   if (inboxEnabled) {
-    lines.push("Structured messaging via agent-inbox with threading and delivery tracking.");
+    lines.push("**Structured messaging** via agent-inbox MCP tools (persistent, threaded, cross-system):");
+    lines.push("- `agent-inbox__check_inbox(agentId)` — check for new messages (auto-marks as read)");
+    lines.push("- `agent-inbox__send_message(to, body, from)` — send to an agent, or `agent@system` for federated");
+    lines.push("- `agent-inbox__read_thread(threadTag)` — read full conversation thread");
+    lines.push("- `agent-inbox__list_agents()` — see who is registered (local + federated)");
+    lines.push("");
+    lines.push("Use inbox for: cross-system messages, threaded conversations, delivery tracking, messaging external observers.");
+    lines.push("Use `SendMessage` for: quick same-team coordination that doesn't need persistence.");
   }
   if (meshEnabled) {
     lines.push("Encrypted P2P transport via MeshPeer with agent discovery.");

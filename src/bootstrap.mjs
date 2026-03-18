@@ -12,11 +12,11 @@
 
 import fs from "fs";
 import { execSync } from "child_process";
-import { readConfig, resolveScope } from "./config.mjs";
+import { readConfig, resolveScope, resolveTeamName } from "./config.mjs";
 import { SOCKET_PATH, MAP_DIR, pluginDir, ensureSwarmDir, ensureOpentasksDir, ensureSessionDir, listSessionDirs } from "./paths.mjs";
 import { findSocketPath, isDaemonAlive, ensureDaemon } from "./opentasks-client.mjs";
 import { loadTeam } from "./template.mjs";
-import { killSidecar, startSidecar } from "./sidecar-client.mjs";
+import { killSidecar, startSidecar, sendToInbox } from "./sidecar-client.mjs";
 import { checkSessionlogStatus, syncSessionlog } from "./sessionlog.mjs";
 import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
 
@@ -316,7 +316,28 @@ export async function bootstrap(pluginDirOverride, sessionId) {
     }
   }
 
-  // 3b. Initial sessionlog sync (fire and forget)
+  // 3b. Register main agent in inbox for message routing
+  if (config.map.enabled && config.inbox?.enabled) {
+    const teamName = resolveTeamName(config);
+    const sPaths = sessionId
+      ? (await import("./paths.mjs")).sessionPaths(sessionId)
+      : { inboxSocketPath: (await import("./paths.mjs")).INBOX_SOCKET_PATH };
+    sendToInbox({
+      action: "notify",
+      event: {
+        type: "agent.spawn",
+        agent: {
+          agentId: `${teamName}-main`,
+          name: `${teamName}-main`,
+          role: "orchestrator",
+          scopes: [scope],
+          metadata: { isMain: true, sessionId },
+        },
+      },
+    }, sPaths.inboxSocketPath).catch(() => {});
+  }
+
+  // 3c. Initial sessionlog sync (fire and forget)
   if (config.map.enabled && config.sessionlog.sync !== "off") {
     syncSessionlog(config, sessionId).catch(() => {});
   }

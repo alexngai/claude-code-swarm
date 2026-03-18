@@ -1,7 +1,8 @@
 #!/bin/bash
 # Wrapper script to run agent-inbox MCP server
-# Reads scope from swarm config, discovers inbox socket
-# Exits silently if inbox is not enabled or not installed
+# When the sidecar's inbox socket exists, runs in proxy mode (IPC client).
+# Otherwise falls back to standalone mode with its own storage.
+# Exits silently if inbox is not enabled or not installed.
 
 # Check if inbox is enabled in config
 ENABLED=false
@@ -45,8 +46,25 @@ if [ -n "$SWARM_INBOX_SCOPE" ]; then
   SCOPE="$SWARM_INBOX_SCOPE"
 fi
 
-# Set env vars for agent-inbox MCP mode
 export INBOX_SCOPE="$SCOPE"
+
+# Discover sidecar inbox socket for proxy mode
+# Check well-known paths: .swarm/claude-swarm/tmp/map/inbox.sock
+INBOX_SOCK=""
+if [ -S .swarm/claude-swarm/tmp/map/inbox.sock ]; then
+  INBOX_SOCK=".swarm/claude-swarm/tmp/map/inbox.sock"
+fi
+
+# Also check per-session paths
+if [ -z "$INBOX_SOCK" ] && [ -d .swarm/claude-swarm/tmp/map/sessions ]; then
+  # Find the most recently modified inbox.sock in session dirs
+  INBOX_SOCK=$(find .swarm/claude-swarm/tmp/map/sessions -name inbox.sock -type s 2>/dev/null | head -1)
+fi
+
+# If inbox socket found, enable proxy mode
+if [ -n "$INBOX_SOCK" ]; then
+  export INBOX_SOCKET_PATH="$INBOX_SOCK"
+fi
 
 # Try to find the agent-inbox module entry point
 INBOX_MAIN=""
@@ -68,6 +86,7 @@ if [ -z "$INBOX_MAIN" ]; then
 fi
 
 if [ -n "$INBOX_MAIN" ]; then
+  # Uses proxy mode when INBOX_SOCKET_PATH is set, standalone otherwise
   exec node "$INBOX_MAIN" mcp
 fi
 
