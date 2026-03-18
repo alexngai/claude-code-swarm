@@ -23,7 +23,7 @@
   },
   "peerDependencies": {
     "@multi-agent-protocol/sdk": "*",
-    "agent-inbox": "file:../agent-inbox",
+    "agent-inbox": "*",
     "opentasks": "*",
     "swarmkit": "*"
   },
@@ -57,8 +57,8 @@
   },
   "devDependencies": {
     "@multi-agent-protocol/sdk": "^0.1.4",
-    "agent-inbox": "file:../agent-inbox",
-    "minimem": "^0.0.7",
+    "agent-inbox": "^0.1.9",
+    "minimem": "^0.1.0",
     "opentasks": "^0.0.6",
     "skill-tree": "^0.1.5",
     "vitest": "^4.0.18",
