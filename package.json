@@ -47,6 +47,7 @@
     "test:e2e:tier3": "vitest run --config e2e/vitest.config.e2e.mjs -t tier3",
     "test:e2e:tier4": "vitest run --config e2e/vitest.config.e2e.mjs -t tier4",
     "test:e2e:tier5": "vitest run --config e2e/vitest.config.e2e.mjs -t tier5",
+    "test:e2e:tier7": "vitest run --config e2e/vitest.config.e2e.mjs -t tier7",
     "version:patch": "npm version patch --no-git-tag-version && node scripts/sync-version.mjs",
     "version:minor": "npm version minor --no-git-tag-version && node scripts/sync-version.mjs",
     "version:major": "npm version major --no-git-tag-version && node scripts/sync-version.mjs"
@@ -57,6 +58,9 @@
   "devDependencies": {
     "@multi-agent-protocol/sdk": "^0.1.4",
     "agent-inbox": "file:../agent-inbox",
+    "minimem": "^0.0.7",
+    "opentasks": "^0.0.6",
+    "skill-tree": "^0.1.5",
     "vitest": "^4.0.18",
     "ws": "^8.0.0"
   }
