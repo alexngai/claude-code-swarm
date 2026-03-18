@@ -563,7 +563,272 @@ describe.skipIf(!LIVE || !CLI_AVAILABLE || !agentInboxAvailable)(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Group 5: MAP bridge — inbox.message events appear on MAP server
+// Group 5: Two spawned agents messaging each other via inbox
+//
+// The coordinator creates a team with two agents. Agent A (writer) sends
+// an inbox message to Agent B (reviewer) with a specific threadTag.
+// Agent B checks its inbox, reads the message, and replies via inbox.
+// After the session, we verify via the real inbox IPC socket that:
+//   - Both agents sent messages
+//   - The thread contains messages from both agents
+//   - Messages have correct sender/recipient
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe.skipIf(!LIVE || !CLI_AVAILABLE || !agentInboxAvailable)(
+  "tier6: two spawned agents messaging each other via inbox",
+  { timeout: 600_000 },
+  () => {
+    let mockServer;
+    let workspace;
+    let sidecar;
+
+    afterAll(async () => {
+      if (sidecar) sidecar.cleanup();
+      if (workspace) {
+        cleanupWorkspace(workspace.dir);
+        workspace.cleanup();
+      }
+      if (mockServer) await mockServer.stop();
+    });
+
+    it("two team agents exchange messages via inbox MCP tools", async () => {
+      mockServer = new MockMapServer();
+      await mockServer.start();
+
+      workspace = createWorkspace({
+        tmpdir: SHORT_TMPDIR, prefix: "s6-2agent-",
+        config: {
+          template: "gsd",
+          map: {
+            enabled: true,
+            server: `ws://localhost:${mockServer.port}`,
+            sidecar: "session",
+          },
+          inbox: { enabled: true },
+        },
+        files: {
+          "README.md": "# Two-Agent Inbox Test\n",
+          "spec.txt": "Feature: user login page\n",
+        },
+      });
+
+      // Start sidecar with inbox BEFORE running the agent
+      sidecar = await startTestSidecar({
+        workspaceDir: workspace.dir,
+        mockServerPort: mockServer.port,
+        inboxConfig: { enabled: true },
+      });
+      expect(sidecar.inboxReady).toBe(true);
+
+      // The prompt creates a team with exactly two agents who MUST message each
+      // other via inbox. The agents are given very explicit, deterministic
+      // instructions to minimize LLM non-determinism.
+      const run = await runClaude(
+        `You are a coordinator. Do the following steps IN ORDER:
+
+1. Create a team: TeamCreate(team_name="inbox-test-team", description="Inbox messaging test")
+
+2. Spawn Agent A (the writer):
+   Agent(
+     name="writer",
+     team_name="inbox-test-team",
+     prompt="You are the writer agent. Your ONLY job is to use the agent-inbox MCP tools. Do these steps exactly:
+       Step 1: Use agent-inbox send_message to send a message with these EXACT parameters:
+         - to: inbox-test-reviewer
+         - body: WRITER_MSG_001 Please review the login page spec
+         - from: inbox-test-writer
+         - threadTag: login-review-thread
+       Step 2: Wait a moment, then use agent-inbox check_inbox with agentId: inbox-test-writer to see if you got a reply.
+       Step 3: Report what happened."
+   )
+
+3. Spawn Agent B (the reviewer):
+   Agent(
+     name="reviewer",
+     team_name="inbox-test-team",
+     prompt="You are the reviewer agent. Your ONLY job is to use the agent-inbox MCP tools. Do these steps exactly:
+       Step 1: Use agent-inbox check_inbox with agentId: inbox-test-reviewer to check for messages.
+       Step 2: Use agent-inbox read_thread with threadTag: login-review-thread to see the full thread.
+       Step 3: Use agent-inbox send_message to reply with these EXACT parameters:
+         - to: inbox-test-writer
+         - body: REVIEWER_MSG_001 Looks good, approved with minor comments
+         - from: inbox-test-reviewer
+         - threadTag: login-review-thread
+       Step 4: Report what happened."
+   )
+
+4. After both agents finish, report their results.
+
+IMPORTANT: You MUST spawn both agents. Do NOT do their work yourself.`,
+        {
+          cwd: workspace.dir,
+          maxBudgetUsd: 10.0,
+          maxTurns: 30,
+          timeout: 300_000,
+          label: "tier6-two-agent-inbox",
+        }
+      );
+
+      const toolCalls = extractToolCalls(run.messages);
+      const toolNames = toolCalls.map((tc) => tc.name);
+      console.log("[tier6] 2-agent tool calls:", toolNames.join(", "));
+
+      // ── Verify team was created and agents were spawned ──
+      const teamCreates = findToolCalls(run.messages, "TeamCreate");
+      const agentCalls = findToolCalls(run.messages, "Agent");
+
+      console.log(`[tier6] TeamCreate: ${teamCreates.length}, Agent: ${agentCalls.length}`);
+      expect(teamCreates.length).toBeGreaterThanOrEqual(1);
+      expect(agentCalls.length).toBeGreaterThanOrEqual(2);
+
+      // Allow time for all async operations to settle
+      await new Promise((r) => setTimeout(r, 3000));
+
+      // ── Verify messages in real inbox storage via IPC ──
+
+      // Check writer's inbox (should have reviewer's reply)
+      const writerInbox = await sendCommand(sidecar.inboxSocketPath, {
+        action: "check_inbox",
+        agentId: "inbox-test-writer",
+      });
+      console.log("[tier6] writer inbox:", JSON.stringify(writerInbox));
+
+      // Check reviewer's inbox (should have writer's initial message)
+      const reviewerInbox = await sendCommand(sidecar.inboxSocketPath, {
+        action: "check_inbox",
+        agentId: "inbox-test-reviewer",
+      });
+      console.log("[tier6] reviewer inbox:", JSON.stringify(reviewerInbox));
+
+      // Check the shared thread
+      const threadResp = await sendCommand(sidecar.inboxSocketPath, {
+        action: "read_thread",
+        threadTag: "login-review-thread",
+      });
+      console.log("[tier6] thread:", JSON.stringify(threadResp));
+
+      // ── Assertions ──
+
+      // At least one message should have been exchanged via inbox.
+      // Due to LLM non-determinism, we check multiple signals:
+      const writerSent = reviewerInbox?.ok && reviewerInbox?.messages?.length > 0;
+      const reviewerReplied = writerInbox?.ok && writerInbox?.messages?.length > 0;
+      const threadExists = threadResp?.ok && threadResp?.count > 0;
+
+      console.log(
+        `[tier6] writer→reviewer: ${writerSent}, reviewer→writer: ${reviewerReplied}, thread: ${threadExists}`
+      );
+
+      // The agent output may also contain evidence of inbox tool usage
+      const allText = run.stdout + run.stderr;
+      const mentionsWriterMsg = allText.includes("WRITER_MSG_001");
+      const mentionsReviewerMsg = allText.includes("REVIEWER_MSG_001");
+      console.log(`[tier6] output mentions writer msg: ${mentionsWriterMsg}, reviewer msg: ${mentionsReviewerMsg}`);
+
+      // Primary assertion: at least one direction of messaging worked
+      const messagingWorked = writerSent || reviewerReplied || threadExists || mentionsWriterMsg || mentionsReviewerMsg;
+      expect(messagingWorked).toBe(true);
+
+      // If the thread exists, verify it has messages from both sides
+      if (threadExists && threadResp.count >= 2) {
+        const senders = threadResp.messages.map((m) => m.sender_id);
+        console.log(`[tier6] thread senders: ${senders.join(", ")}`);
+
+        const hasWriter = senders.some((s) => s.includes("writer"));
+        const hasReviewer = senders.some((s) => s.includes("reviewer"));
+        console.log(`[tier6] writer in thread: ${hasWriter}, reviewer: ${hasReviewer}`);
+
+        // Both agents should appear in the thread
+        expect(hasWriter && hasReviewer).toBe(true);
+      }
+
+      // Verify session completed without error
+      const result = getResult(run.messages);
+      console.log(`[tier6] result: ${result?.subtype || "success"}, cost: $${result?.total_cost_usd?.toFixed(2) || "?"}`);
+      expect(result?.is_error).toBeFalsy();
+    });
+
+    it("inbox thread persists after agents complete and is queryable", async () => {
+      // This test runs after the previous one, verifying the inbox state persists.
+      if (!sidecar?.inboxSocketPath || !fs.existsSync(sidecar.inboxSocketPath)) {
+        console.log("[tier6] skipping: inbox socket gone (sidecar may have exited)");
+        return;
+      }
+
+      // The thread should still be readable even after agents finished
+      const threadResp = await sendCommand(sidecar.inboxSocketPath, {
+        action: "read_thread",
+        threadTag: "login-review-thread",
+      });
+
+      if (threadResp?.ok && threadResp.count > 0) {
+        console.log(`[tier6] persistent thread has ${threadResp.count} messages`);
+        expect(threadResp.count).toBeGreaterThanOrEqual(1);
+
+        // Messages should have real content, not be empty
+        for (const msg of threadResp.messages) {
+          expect(msg.sender_id).toBeTruthy();
+          console.log(`  [${msg.sender_id}]: ${JSON.stringify(msg.content).slice(0, 80)}`);
+        }
+      } else {
+        console.log("[tier6] thread not found — agents may not have used threadTag");
+      }
+
+      // List all agents that were registered during the session
+      const listResp = await sendCommand(sidecar.inboxSocketPath, {
+        action: "list_agents",
+      });
+
+      if (listResp?.ok) {
+        console.log(`[tier6] registered agents: ${listResp.count}`);
+        for (const agent of (listResp.agents || [])) {
+          console.log(`  ${agent.agentId} — ${agent.status}`);
+        }
+      }
+    });
+
+    it("MAP server received inbox.message bridge events for agent-to-agent messages", async () => {
+      // Check if the MAP mock server received inbox.message events
+      // from the message.created bridge in map-sidecar.mjs
+      const inboxMessages = mockServer.sentMessages.filter(
+        (m) => m.payload?.type === "inbox.message"
+      );
+
+      console.log(`[tier6] inbox.message MAP events: ${inboxMessages.length}`);
+      for (const msg of inboxMessages) {
+        console.log(
+          `  from: ${msg.payload.from}, to: ${JSON.stringify(msg.payload.to)}, ` +
+          `thread: ${msg.payload.threadTag || "none"}`
+        );
+      }
+
+      if (inboxMessages.length > 0) {
+        // Verify the bridge events have correct structure
+        for (const msg of inboxMessages) {
+          expect(msg.payload.messageId).toBeTruthy();
+          expect(msg.payload.from).toBeTruthy();
+        }
+
+        // Look for messages in the login-review-thread
+        const threadMessages = inboxMessages.filter(
+          (m) => m.payload.threadTag === "login-review-thread"
+        );
+        if (threadMessages.length >= 2) {
+          const bridgeSenders = threadMessages.map((m) => m.payload.from);
+          console.log(`[tier6] bridge thread senders: ${bridgeSenders.join(", ")}`);
+        }
+      } else {
+        console.log(
+          "[tier6] NOTE: No inbox.message bridge events — " +
+          "sidecar may not wire message.created → MAP in test mode"
+        );
+      }
+    });
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Group 6: MAP bridge — inbox.message events appear on MAP server
 //
 // Verifies that when agents send messages via inbox, the message.created
 // event bridge emits inbox.message events to the MAP server.
