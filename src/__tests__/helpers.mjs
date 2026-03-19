@@ -22,6 +22,12 @@ export function makeConfig(overrides = {}) {
       scope: overrides.scope ?? "",
       systemId: overrides.systemId ?? "system-claude-swarm",
       sidecar: overrides.sidecar ?? "session",
+      swarmId: overrides.swarmId ?? "",
+      auth: {
+        token: overrides.authToken ?? "",
+        param: overrides.authParam ?? "token",
+        credential: overrides.authCredential ?? "",
+      },
     },
     sessionlog: {
       enabled: overrides.sessionlogEnabled ?? false,

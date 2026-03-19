@@ -71,6 +71,13 @@ describe("map-connection", () => {
       const opts = mockConnect.mock.calls[0][1];
       expect(opts.capabilities.trajectory.canReport).toBe(true);
     });
+
+    it("connects with credential param (open mode fallback)", async () => {
+      const conn = await connectToMAP({ server: "ws://test", scope: "swarm:t", systemId: "s", credential: "some-cred" });
+      expect(conn).not.toBeNull();
+      // credential is accepted but not passed to SDK connect (SDK doesn't support auth negotiation yet)
+      expect(mockConnect).toHaveBeenCalledOnce();
+    });
   });
 
   describe("fireAndForget", () => {

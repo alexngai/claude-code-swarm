@@ -87,7 +87,7 @@ export async function startSidecar(config, pluginDirOverride, sessionId) {
   const sidecarPath = path.join(dir, "scripts", "map-sidecar.mjs");
   const sPaths = sessionPaths(sessionId);
 
-  const server = resolveMapServer(config);
+  const server = resolveMapServer(config, sessionId);
   const scope = resolveScope(config);
   const systemId = config.map?.systemId || DEFAULTS.mapSystemId;
 
@@ -97,6 +97,11 @@ export async function startSidecar(config, pluginDirOverride, sessionId) {
     const args = [sidecarPath, "--server", server, "--scope", scope, "--system-id", systemId];
     if (sessionId) {
       args.push("--session-id", sessionId);
+    }
+    // Pass auth credential for server-driven auth negotiation
+    const credential = config.map?.auth?.credential;
+    if (credential) {
+      args.push("--credential", credential);
     }
     if (config.inbox?.enabled) {
       args.push("--inbox-config", JSON.stringify(config.inbox));

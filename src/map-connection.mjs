@@ -11,14 +11,23 @@ import { resolveScope, resolveTeamName, resolveMapServer, DEFAULTS } from "./con
  * Connect to a MAP server as an agent.
  * Returns the AgentConnection or null on failure. Never throws.
  */
-export async function connectToMAP({ server, scope, systemId, onMessage }) {
+/**
+ * Connect to a MAP server as an agent.
+ *
+ * @param credential  Opaque credential for server-driven auth negotiation.
+ *   When the server requires auth (verified mode), uses the SDK's connectOnly()
+ *   + authenticate() + register() flow. The client responds to the server's
+ *   authRequired challenge with the server's preferred method + this credential.
+ *   When absent, uses the standard SDK connect() for open mode servers.
+ */
+export async function connectToMAP({ server, scope, systemId, onMessage, credential }) {
   try {
     const { AgentConnection } = await import("@multi-agent-protocol/sdk");
 
     const teamName = scope.replace("swarm:", "");
     const agentName = `${teamName}-sidecar`;
 
-    const connection = await AgentConnection.connect(server, {
+    const connectOpts = {
       name: agentName,
       role: "sidecar",
       scopes: [scope],
@@ -36,7 +45,30 @@ export async function connectToMAP({ server, scope, systemId, onMessage }) {
         baseDelayMs: 1000,
         maxDelayMs: 30000,
       },
-    });
+    };
+
+    let connection;
+
+    if (credential && typeof AgentConnection.createConnection === "function") {
+      // Verified mode: use the split flow (connectOnly → authenticate → register).
+      // The server drives the auth method — we just respond with our credential.
+      connection = await AgentConnection.createConnection(server, connectOpts);
+      const connectResult = await connection.connectOnly();
+
+      if (connectResult.authRequired && connectResult.authRequired.required) {
+        const method = connectResult.authRequired.methods[0];
+        const authResult = await connection.authenticate({ method, token: credential });
+        if (!authResult.success) {
+          process.stderr.write(`[map] Authentication failed: ${authResult.error?.message || "unknown error"}\n`);
+          return null;
+        }
+      }
+
+      await connection.register();
+    } else {
+      // Open mode (or SDK without createConnection): standard connect + register
+      connection = await AgentConnection.connect(server, connectOpts);
+    }
 
     if (onMessage) {
       connection.onMessage(onMessage);

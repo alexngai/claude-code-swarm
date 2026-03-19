@@ -41,6 +41,9 @@ const SYSTEM_ID = getArg("system-id", "system-claude-swarm");
 const SESSION_ID = getArg("session-id", "");
 const INACTIVITY_TIMEOUT_MS = parseInt(getArg("inactivity-timeout", ""), 10) || 30 * 60 * 1000;
 
+// Auth credential for server-driven auth negotiation (opaque — type determined by server)
+const AUTH_CREDENTIAL = getArg("credential", "");
+
 // Mesh transport args
 const MESH_ENABLED = hasFlag("mesh-enabled");
 const MESH_PEER_ID = getArg("mesh-peer-id", "");
@@ -173,6 +176,7 @@ async function startWebSocketTransport() {
     server: MAP_SERVER,
     scope: MAP_SCOPE,
     systemId: SYSTEM_ID,
+    credential: AUTH_CREDENTIAL || undefined,
     onMessage: () => {
       resetInactivityTimer();
     },

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import path from "path";
-import { readConfig, resolveScope, resolveTeamName, DEFAULTS } from "../config.mjs";
+import { readConfig, resolveScope, resolveTeamName, resolveMapServer, DEFAULTS } from "../config.mjs";
 import { makeTmpDir, writeFile, cleanupTmpDir } from "./helpers.mjs";
 
 describe("config", () => {
@@ -454,6 +454,117 @@ describe("config", () => {
 
     it("returns 'default' when no scope or template", () => {
       expect(resolveTeamName({ map: { scope: "" }, template: "" })).toBe("default");
+    });
+  });
+
+  describe("resolveMapServer", () => {
+    it("returns default server when no config", () => {
+      const url = resolveMapServer({ map: {} });
+      expect(url).toBe("ws://localhost:8080/");
+    });
+
+    it("appends API key as query param", () => {
+      const url = resolveMapServer({
+        map: { server: "ws://hub:3000", auth: { token: "my-key", param: "token" } },
+      });
+      expect(url).toContain("token=my-key");
+    });
+
+    it("uses custom param name for API key", () => {
+      const url = resolveMapServer({
+        map: { server: "ws://hub:3000", auth: { token: "key123", param: "api_key" } },
+      });
+      expect(url).toContain("api_key=key123");
+    });
+
+    it("appends swarm_id from config for stable identity", () => {
+      const url = resolveMapServer({
+        map: { server: "ws://hub:3000", swarmId: "my-swarm-id", auth: {} },
+      });
+      expect(url).toContain("swarm_id=my-swarm-id");
+    });
+
+    it("uses sessionId as default swarm_id", () => {
+      const url = resolveMapServer({ map: { server: "ws://hub:3000", auth: {} } }, "sess-abc");
+      expect(url).toContain("swarm_id=sess-abc");
+    });
+
+    it("prefers config swarmId over sessionId", () => {
+      const url = resolveMapServer(
+        { map: { server: "ws://hub:3000", swarmId: "explicit-id", auth: {} } },
+        "sess-abc"
+      );
+      expect(url).toContain("swarm_id=explicit-id");
+      expect(url).not.toContain("sess-abc");
+    });
+
+    it("does not append swarm_id when credential is set (verified mode)", () => {
+      const url = resolveMapServer({
+        map: {
+          server: "ws://hub:3000",
+          swarmId: "my-id",
+          auth: { token: "key", credential: "iam-token-blob" },
+        },
+      });
+      expect(url).not.toContain("swarm_id");
+      // API key is still appended for hub access
+      expect(url).toContain("token=key");
+    });
+
+    it("does not double-add token if already in URL", () => {
+      const url = resolveMapServer({
+        map: { server: "ws://hub:3000?token=existing", auth: { token: "new-key", param: "token" } },
+      });
+      expect(url).toContain("token=existing");
+      expect(url).not.toContain("new-key");
+    });
+  });
+
+  describe("readConfig — auth fields", () => {
+    let tmpDir;
+    let noGlobal;
+    beforeEach(() => {
+      tmpDir = makeTmpDir();
+      noGlobal = path.join(tmpDir, "no-global.json");
+    });
+    afterEach(() => { cleanupTmpDir(tmpDir); });
+
+    it("reads swarmId from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        template: "test",
+        map: { swarmId: "my-stable-id" },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.map.swarmId).toBe("my-stable-id");
+    });
+
+    it("reads auth.credential from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        template: "test",
+        map: { auth: { credential: "some-token-blob" } },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.map.auth.credential).toBe("some-token-blob");
+    });
+
+    it("reads AGENT_TOKEN env var as credential", () => {
+      const prev = process.env.AGENT_TOKEN;
+      try {
+        process.env.AGENT_TOKEN = "env-iam-token";
+        const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+        const config = readConfig(configPath, noGlobal);
+        expect(config.map.auth.credential).toBe("env-iam-token");
+      } finally {
+        if (prev !== undefined) process.env.AGENT_TOKEN = prev;
+        else delete process.env.AGENT_TOKEN;
+      }
+    });
+
+    it("defaults swarmId and credential to empty string", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.map.swarmId).toBe("");
+      expect(config.map.auth.credential).toBe("");
     });
   });
 });

@@ -70,9 +70,13 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
       scope: envStr("SWARM_MAP_SCOPE") ?? project.map?.scope ?? global.map?.scope ?? "",
       systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? project.map?.systemId ?? global.map?.systemId ?? DEFAULTS.mapSystemId,
       sidecar: envStr("SWARM_MAP_SIDECAR") ?? project.map?.sidecar ?? global.map?.sidecar ?? DEFAULTS.mapSidecar,
+      swarmId: envStr("SWARM_MAP_SWARM_ID") ?? project.map?.swarmId ?? global.map?.swarmId ?? "",
       auth: {
         token: envStr("SWARM_MAP_AUTH_TOKEN") ?? project.map?.auth?.token ?? global.map?.auth?.token ?? "",
         param: envStr("SWARM_MAP_AUTH_PARAM") ?? project.map?.auth?.param ?? global.map?.auth?.param ?? "token",
+        // Opaque credential presented when server challenges with map/authenticate.
+        // The client doesn't know the type — the server tells it what method to use.
+        credential: envStr("AGENT_TOKEN") ?? envStr("SWARM_MAP_AUTH_CREDENTIAL") ?? project.map?.auth?.credential ?? global.map?.auth?.credential ?? "",
       },
     },
     sessionlog: {
@@ -115,20 +119,35 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
 }
 
 /**
- * Build the MAP server URL with auth query param if configured.
- * If the token is already in the server URL, returns as-is.
+ * Build the MAP server URL with auth query params.
+ *
+ * Always appends the API key (?token=) for hub access (both open + verified modes).
+ * Appends swarm_id for stable identity in open mode.
+ * The auth credential (for verified mode) is sent via map/authenticate, not here.
+ *
+ * @param config  Parsed config from readConfig()
+ * @param sessionId  Optional session ID used as default swarm_id for stable identity
  */
-export function resolveMapServer(config) {
+export function resolveMapServer(config, sessionId) {
   const server = config.map?.server || DEFAULTS.mapServer;
-  const token = config.map?.auth?.token;
-  if (!token) return server;
-
-  // Don't double-add if token is already in the URL
   const url = new URL(server);
-  const param = config.map?.auth?.param || "token";
-  if (url.searchParams.has(param)) return server;
 
-  url.searchParams.set(param, token);
+  // API key for hub access (both modes)
+  const token = config.map?.auth?.token;
+  if (token) {
+    const param = config.map?.auth?.param || "token";
+    if (!url.searchParams.has(param)) url.searchParams.set(param, token);
+  }
+
+  // Swarm ID for stable identity (open mode — in verified mode, identity comes from credential)
+  const hasCredential = !!config.map?.auth?.credential;
+  if (!hasCredential) {
+    const swarmId = config.map?.swarmId || sessionId;
+    if (swarmId) {
+      url.searchParams.set("swarm_id", swarmId);
+    }
+  }
+
   return url.toString();
 }
 
