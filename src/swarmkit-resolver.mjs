@@ -19,17 +19,33 @@ let _globalPrefix = undefined;
 let _swarmkit = undefined;
 
 /**
- * Get the global npm prefix path (cached).
+ * Get the global npm prefix path (cached in-memory + on disk).
+ * The disk cache avoids a ~70ms execSync('npm prefix -g') on every startup.
  * Returns null if npm is not available.
  */
 export function getGlobalPrefix() {
   if (_globalPrefix !== undefined) return _globalPrefix;
+
+  // Try disk cache first (stable across sessions — only changes if npm is reinstalled)
+  const cacheFile = path.join(pluginDir(), "node_modules", ".npm-prefix-cache");
+  try {
+    const cached = fs.readFileSync(cacheFile, "utf-8").trim();
+    if (cached && fs.existsSync(cached)) {
+      _globalPrefix = cached;
+      return _globalPrefix;
+    }
+  } catch {
+    // Cache miss — fall through
+  }
+
   try {
     _globalPrefix = execSync("npm prefix -g", {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
+    // Persist to disk cache (best-effort)
+    try { fs.writeFileSync(cacheFile, _globalPrefix); } catch {}
   } catch {
     _globalPrefix = null;
   }

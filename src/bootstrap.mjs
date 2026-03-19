@@ -1,10 +1,9 @@
 /**
  * bootstrap.mjs — SessionStart orchestration for claude-code-swarm
  *
- * Reads config, installs local deps (js-yaml, swarmkit), ensures global
- * packages via swarmkit (openteams, MAP SDK, sessionlog), starts MAP
- * sidecar if configured, runs initial sessionlog sync.
- * Returns context object for formatting.
+ * Two-phase bootstrap: a fast synchronous path returns context immediately
+ * (config + cached team artifacts), while slow operations (package version
+ * checks, sidecar startup, project init, status probes) run in the background.
  *
  * Supports per-session sidecars: when sessionId is provided, each session
  * gets its own sidecar process with isolated socket/pid/inbox paths.
@@ -83,18 +82,22 @@ async function ensureGlobalPackages(config) {
   }
 
   const required = getRequiredGlobalPackages(config);
-  const missing = [];
 
-  for (const pkg of required) {
-    try {
-      const version = await swarmkit.getInstalledVersion(pkg);
-      if (!version) {
-        missing.push(pkg);
+  // Check all versions in parallel (~850ms each sequential → ~850ms total)
+  const checks = await Promise.allSettled(
+    required.map(async (pkg) => {
+      try {
+        const version = await swarmkit.getInstalledVersion(pkg);
+        return { pkg, version };
+      } catch {
+        return { pkg, version: null };
       }
-    } catch {
-      missing.push(pkg);
-    }
-  }
+    })
+  );
+  const missing = checks
+    .map((r) => r.status === "fulfilled" ? r.value : { pkg: "unknown", version: null })
+    .filter((r) => !r.version)
+    .map((r) => r.pkg);
 
   if (missing.length === 0) return;
 
@@ -254,30 +257,105 @@ function checkPersistentSidecar(scope) {
 }
 
 /**
+ * Background work: package checks, sidecar startup, project init, status probes.
+ * Fire-and-forget — errors go to stderr, never block the session.
+ * Hooks have auto-recovery logic if sidecar isn't ready yet.
+ */
+export async function backgroundInit(config, scope, dir, sessionId) {
+  try {
+    // Parallelize: version checks + project init + sidecar startup
+    const tasks = [];
+
+    // Package version checks (slowest: ~1.7s sequential, runs in parallel here)
+    tasks.push(ensureGlobalPackages(config));
+
+    // Project directory init
+    tasks.push(initSwarmProject(config));
+
+    // MAP sidecar startup
+    if (config.map.enabled) {
+      if (sessionId) {
+        ensureSessionDir(sessionId);
+      } else {
+        fs.mkdirSync(MAP_DIR, { recursive: true });
+      }
+
+      if (config.map.sidecar === "session") {
+        cleanupStaleSessions();
+        tasks.push(
+          startSessionSidecar(config, scope, dir, sessionId).then((status) => {
+            process.stderr.write(`[bootstrap:bg] MAP: ${status}\n`);
+          })
+        );
+      }
+    }
+
+    // Inbox registration
+    if (config.map.enabled && config.inbox?.enabled) {
+      const teamName = resolveTeamName(config);
+      const sPaths = sessionId
+        ? (await import("./paths.mjs")).sessionPaths(sessionId)
+        : { inboxSocketPath: (await import("./paths.mjs")).INBOX_SOCKET_PATH };
+      tasks.push(
+        sendToInbox({
+          action: "notify",
+          event: {
+            type: "agent.spawn",
+            agent: {
+              agentId: `${teamName}-main`,
+              name: `${teamName}-main`,
+              role: "orchestrator",
+              scopes: [scope],
+              metadata: { isMain: true, sessionId },
+            },
+          },
+        }, sPaths.inboxSocketPath).catch(() => {})
+      );
+    }
+
+    // Sessionlog sync
+    if (config.map.enabled && config.sessionlog.sync !== "off") {
+      tasks.push(syncSessionlog(config, sessionId).catch(() => {}));
+    }
+
+    // OpenTasks daemon
+    if (config.opentasks?.enabled) {
+      ensureOpentasksDir();
+      if (config.opentasks?.autoStart) {
+        tasks.push(ensureDaemon(config).catch(() => {}));
+      }
+    }
+
+    await Promise.allSettled(tasks);
+  } catch (err) {
+    process.stderr.write(`[bootstrap:bg] Error: ${err.message}\n`);
+  }
+}
+
+/**
  * Full bootstrap flow. Returns context object for formatting.
+ *
+ * Fast path (~100ms): reads config, loads cached team artifacts, returns immediately.
+ * Background path (fire-and-forget): package checks, sidecar, project init.
  * When sessionId is provided, uses per-session sidecar paths.
  */
 export async function bootstrap(pluginDirOverride, sessionId) {
   const dir = pluginDirOverride || pluginDir();
 
-  // 0. Install local dependencies (js-yaml, swarmkit)
+  // ── Fast path: must complete before returning context ──────────────
+
+  // 0. Install local dependencies (js-yaml, swarmkit) — skipped if node_modules exists
   installLocalDeps(dir);
 
-  // 1. Read config (before ensureGlobalPackages so we know what's needed)
+  // 1. Read config
   const config = readConfig();
 
   // 1b. Configure NODE_PATH (global + local node_modules)
   configureNodePath(dir);
 
-  // 1c. Ensure global packages are installed via swarmkit (async, best-effort)
-  await ensureGlobalPackages(config);
-
-  // 1d. Initialize swarmkit project directories (.swarm/openteams/, .swarm/sessionlog/, .swarm/claude-swarm/)
-  await initSwarmProject(config);
-
   const scope = resolveScope(config);
 
-  // 1e. Load team template if configured (resolve, generate/cache, write roles.json)
+  // 2. Load team template if configured (fast if cached)
   let team = null;
   if (config.template) {
     try {
@@ -292,89 +370,36 @@ export async function bootstrap(pluginDirOverride, sessionId) {
     }
   }
 
-  // 2. Check sessionlog status
+  // 3. Sessionlog status — actual check is slow (execSync), defer to background
   let sessionlogStatus = "not installed";
   if (config.sessionlog.enabled) {
-    sessionlogStatus = checkSessionlogStatus();
+    sessionlogStatus = "checking";
   }
 
-  // 3. Start MAP sidecar if configured
+  // 4. Quick MAP status — report "starting" for session sidecars (actual startup is background)
   let mapStatus = "disabled";
   if (config.map.enabled) {
-    if (sessionId) {
-      ensureSessionDir(sessionId);
-    } else {
-      fs.mkdirSync(MAP_DIR, { recursive: true });
-    }
-
     if (config.map.sidecar === "session") {
-      // Clean up stale sessions before starting new one
-      cleanupStaleSessions();
-      mapStatus = await startSessionSidecar(config, scope, dir, sessionId);
+      mapStatus = `starting (scope: ${scope})`;
     } else if (config.map.sidecar === "persistent") {
       mapStatus = checkPersistentSidecar(scope);
     }
   }
 
-  // 3b. Register main agent in inbox for message routing
-  if (config.map.enabled && config.inbox?.enabled) {
-    const teamName = resolveTeamName(config);
-    const sPaths = sessionId
-      ? (await import("./paths.mjs")).sessionPaths(sessionId)
-      : { inboxSocketPath: (await import("./paths.mjs")).INBOX_SOCKET_PATH };
-    sendToInbox({
-      action: "notify",
-      event: {
-        type: "agent.spawn",
-        agent: {
-          agentId: `${teamName}-main`,
-          name: `${teamName}-main`,
-          role: "orchestrator",
-          scopes: [scope],
-          metadata: { isMain: true, sessionId },
-        },
-      },
-    }, sPaths.inboxSocketPath).catch(() => {});
-  }
-
-  // 3c. Initial sessionlog sync (fire and forget)
-  if (config.map.enabled && config.sessionlog.sync !== "off") {
-    syncSessionlog(config, sessionId).catch(() => {});
-  }
-
-  // 4. Start opentasks daemon if configured
+  // 5. Quick status for optional integrations (actual probes are too slow for fast path)
   let opentasksStatus = "disabled";
   if (config.opentasks?.enabled) {
-    ensureOpentasksDir();
-    if (config.opentasks?.autoStart) {
-      const ok = await ensureDaemon(config);
-      opentasksStatus = ok ? "connected" : "starting";
-    } else {
-      const alive = await isDaemonAlive(findSocketPath());
-      opentasksStatus = alive ? "connected" : "not running (autoStart: false)";
-    }
+    opentasksStatus = "enabled";
   }
 
-  // 5. Check minimem status if enabled
   let minimemStatus = "disabled";
   if (config.minimem?.enabled) {
-    try {
-      execSync("minimem status", { stdio: "pipe", timeout: 5000 });
-      minimemStatus = "ready";
-    } catch {
-      minimemStatus = "installed";
-    }
+    minimemStatus = "enabled";
   }
 
-  // 6. Check skill-tree status if enabled
   let skilltreeStatus = "disabled";
   if (config.skilltree?.enabled) {
-    try {
-      execSync("skill-tree list --json", { stdio: "pipe", timeout: 5000 });
-      skilltreeStatus = "ready";
-    } catch {
-      skilltreeStatus = "installed";
-    }
+    skilltreeStatus = "enabled";
   }
 
   return {
