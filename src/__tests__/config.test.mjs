@@ -523,11 +523,27 @@ describe("config", () => {
   describe("readConfig — log fields", () => {
     let tmpDir;
     let noGlobal;
+    const savedLogEnv = {};
     beforeEach(() => {
       tmpDir = makeTmpDir();
       noGlobal = path.join(tmpDir, "no-global.json");
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith("SWARM_LOG")) {
+          savedLogEnv[key] = process.env[key];
+          delete process.env[key];
+        }
+      }
     });
-    afterEach(() => { cleanupTmpDir(tmpDir); });
+    afterEach(() => {
+      cleanupTmpDir(tmpDir);
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith("SWARM_LOG")) delete process.env[key];
+      }
+      for (const [key, val] of Object.entries(savedLogEnv)) {
+        process.env[key] = val;
+      }
+      Object.keys(savedLogEnv).forEach((k) => delete savedLogEnv[k]);
+    });
 
     it("defaults log level to warn", () => {
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));

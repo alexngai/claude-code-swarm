@@ -5,11 +5,12 @@
  *
  * Path resolution priority:
  *   1. If .swarm/claude-swarm/ exists in CWD → use project-level paths
- *   2. Otherwise → use global paths at ~/.claude/claude-swarm/tmp/
+ *   2. Otherwise → use global paths at ~/.claude-swarm/tmp/
  *
  * Global layout:
- *   ~/.claude/claude-swarm/tmp/teams/<template>/   — shared template artifact cache
- *   ~/.claude/claude-swarm/tmp/map/<cwd-hash>/     — per-project MAP runtime state
+ *   ~/.claude-swarm/tmp/teams/<template>/   — shared template artifact cache
+ *   ~/.claude-swarm/tmp/map/<cwd-hash>/     — per-project MAP runtime state
+ *   ~/.claude-swarm/tmp/logs/<sessionId>.log — per-session log files
  *
  * Project layout (backward-compatible):
  *   .swarm/claude-swarm/config.json                — user config (always project-relative)
@@ -36,7 +37,7 @@ export const SESSIONLOG_DIR = path.join(".git", "sessionlog-sessions");
 
 // --- Global base directory ---
 
-const GLOBAL_BASE = path.join(os.homedir(), ".claude", "claude-swarm");
+const GLOBAL_BASE = GLOBAL_CONFIG_DIR;
 
 // --- Path resolution ---
 
@@ -51,7 +52,7 @@ function cwdHash() {
 /**
  * Resolve the base tmp directory.
  * If .swarm/claude-swarm/ exists in CWD, use project-level paths.
- * Otherwise, use global paths at ~/.claude/claude-swarm/tmp/.
+ * Otherwise, use global paths at ~/.claude-swarm/tmp/.
  */
 function resolveBaseTmpDir() {
   if (fs.existsSync(SWARM_DIR)) {
@@ -94,15 +95,15 @@ export const PID_PATH = path.join(_mapDir, "sidecar.pid");
 export const ROLES_PATH = path.join(_mapDir, "roles.json");
 export const SESSIONLOG_STATE_PATH = path.join(_mapDir, "sessionlog-state.json");
 export const SIDECAR_LOG_PATH = path.join(_mapDir, "sidecar.log");
-export const LOG_PATH = path.join(GLOBAL_BASE, "tmp", "logs", "swarm.log");
-export const LOGS_DIR = path.join(GLOBAL_BASE, "tmp", "logs");
+export const LOG_PATH = path.join(GLOBAL_CONFIG_DIR, "tmp", "logs", "swarm.log");
+export const LOGS_DIR = path.join(GLOBAL_CONFIG_DIR, "tmp", "logs");
 
 // opentasks runtime state
 export const OPENTASKS_DIR = path.join(_tmpDir, "opentasks");
 export const OPENTASKS_SYNC_STATE_PATH = path.join(_tmpDir, "opentasks", "sync-state.json");
 
 /**
- * Whether paths resolved to global (~/.claude/claude-swarm/tmp/) vs project-level.
+ * Whether paths resolved to global (~/.claude-swarm/tmp/) vs project-level.
  */
 export const IS_GLOBAL_PATHS = _isGlobal;
 
@@ -111,7 +112,7 @@ export const IS_GLOBAL_PATHS = _isGlobal;
 /**
  * Get the per-template team directory.
  * E.g. teamDir("gsd") → ".swarm/claude-swarm/tmp/teams/gsd" or
- *      "~/.claude/claude-swarm/tmp/teams/gsd"
+ *      "~/.claude-swarm/tmp/teams/gsd"
  */
 export function teamDir(templateName) {
   return path.join(TEAMS_DIR, templateName);
@@ -120,7 +121,7 @@ export function teamDir(templateName) {
 /**
  * Ensure the necessary directories exist.
  * - Project-level: creates .swarm/claude-swarm/ with .gitignore for tmp/
- * - Global: creates ~/.claude/claude-swarm/tmp/ (no .gitignore needed)
+ * - Global: creates ~/.claude-swarm/tmp/ (no .gitignore needed)
  */
 export function ensureSwarmDir() {
   if (_isGlobal) {

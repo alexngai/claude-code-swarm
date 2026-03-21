@@ -12,12 +12,12 @@
  * Configuration (env vars take priority over init() values):
  *   SWARM_LOG_LEVEL  — error | warn | info | debug (default: warn)
  *   SWARM_LOG_FILE   — explicit log file path (overrides everything)
- *   SWARM_LOG_DIR    — log directory for per-session files (default: ~/.claude/claude-swarm/tmp/logs/)
+ *   SWARM_LOG_DIR    — log directory for per-session files (default: ~/.claude-swarm/tmp/logs/)
  *   SWARM_LOG_STDERR — true | false (default: true)
  *
  * Per-session logs:
  *   When init() is called with a sessionId, logs go to <dir>/<sessionId>.log.
- *   Default dir is ~/.claude/claude-swarm/tmp/logs/ (always global).
+ *   Default dir is ~/.claude-swarm/tmp/logs/ (always global).
  *   SWARM_LOG_FILE overrides per-session paths entirely.
  */
 

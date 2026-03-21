@@ -83,7 +83,7 @@ describe("path resolution logic", () => {
     paths = await import("../paths.mjs");
   });
 
-  const globalBase = path.join(os.homedir(), ".claude", "claude-swarm");
+  const globalBase = path.join(os.homedir(), ".claude-swarm");
 
   it("when global: TMP_DIR is under ~/.claude/claude-swarm/tmp/", () => {
     if (!paths.IS_GLOBAL_PATHS) return; // skip if project-level

@@ -247,12 +247,12 @@ Structured logging with leveled output (JSON Lines to file, human-readable to st
 
 **Per-session log files**: Each Claude Code session writes to its own log file at `<dir>/<sessionId>.log`. The session ID comes from Claude Code's hook data and is available in all entry points (bootstrap, hooks, sidecar).
 
-**Default log directory**: `~/.claude/claude-swarm/tmp/logs/` (always global, not project-scoped).
+**Default log directory**: `~/.claude-swarm/tmp/logs/` (always global, not project-scoped).
 
 Log options:
 - `level` — Log level threshold (default: `warn`)
 - `file` — Explicit log file path, overrides per-session paths (default: `""`)
-- `dir` — Directory for per-session log files (default: `~/.claude/claude-swarm/tmp/logs/`)
+- `dir` — Directory for per-session log files (default: `~/.claude-swarm/tmp/logs/`)
 - `stderr` — Also write human-readable output to stderr (default: `true`)
 
 Quick debugging:
@@ -308,7 +308,7 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `mesh.mapServer` | `SWARM_MESH_MAP_SERVER` | string | `""` |
 | `log.level` | `SWARM_LOG_LEVEL` | string | `warn` |
 | `log.file` | `SWARM_LOG_FILE` | string | `""` (per-session default) |
-| `log.dir` | `SWARM_LOG_DIR` | string | `""` (`~/.claude/claude-swarm/tmp/logs/`) |
+| `log.dir` | `SWARM_LOG_DIR` | string | `""` (`~/.claude-swarm/tmp/logs/`) |
 | `log.stderr` | `SWARM_LOG_STDERR` | boolean | `true` |
 
 MAP is implicitly enabled when `map.server` is configured (in file or via `SWARM_MAP_SERVER`). Use `SWARM_MAP_ENABLED=false` to explicitly disable.
