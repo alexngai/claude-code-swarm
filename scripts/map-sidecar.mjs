@@ -40,6 +40,7 @@ const MAP_SCOPE = getArg("scope", "swarm:default");
 const SYSTEM_ID = getArg("system-id", "system-claude-swarm");
 const SESSION_ID = getArg("session-id", "");
 const INACTIVITY_TIMEOUT_MS = parseInt(getArg("inactivity-timeout", ""), 10) || 30 * 60 * 1000;
+const RECONNECT_INTERVAL_MS = parseInt(getArg("reconnect-interval", ""), 10) || 60000;
 
 // Auth credential for server-driven auth negotiation (opaque — type determined by server)
 const AUTH_CREDENTIAL = getArg("credential", "");
@@ -69,8 +70,10 @@ const sPaths = SESSION_ID
 let connection = null;
 let meshPeer = null;
 let socketServer = null;
+let commandHandler = null;
 let inboxInstance = null;
 let inactivityTimer = null;
+let reconnectInterval = null;
 let transportMode = "websocket"; // "mesh" or "websocket"
 const registeredAgents = new Map();
 
@@ -90,6 +93,7 @@ async function shutdown() {
   process.stderr.write("[sidecar] Shutting down...\n");
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
+  if (reconnectInterval) clearInterval(reconnectInterval);
 
   // Stop agent-inbox first (it borrows the connection/peer, doesn't own it)
   if (inboxInstance) {
@@ -128,6 +132,126 @@ process.on("unhandledRejection", (reason) => {
   // Don't shutdown — log and continue. The rejection is likely from a
   // non-critical SDK operation (e.g. scope-based send, state update).
 });
+
+// ── Reconnection ───────────────────────────────────────────────────────────
+
+/**
+ * Attach SDK reconnection event listener to detect when built-in retries
+ * are exhausted. On `reconnectFailed`, starts a slower retry loop.
+ * On `reconnected`, the SDK handled it — just log.
+ */
+function attachReconnectionListener(conn) {
+  if (!conn?.onReconnection) return;
+
+  conn.onReconnection((event) => {
+    if (event.type === "reconnectFailed") {
+      process.stderr.write(
+        `[sidecar] SDK reconnection exhausted (${event.error?.message || "unknown error"}), starting slow retry loop (${RECONNECT_INTERVAL_MS}ms)\n`
+      );
+      startSlowReconnectLoop();
+    } else if (event.type === "reconnected") {
+      process.stderr.write("[sidecar] SDK reconnected to MAP server\n");
+    } else if (event.type === "disconnected") {
+      process.stderr.write("[sidecar] Disconnected from MAP server, SDK will attempt reconnection\n");
+    }
+  });
+}
+
+/**
+ * Slow retry loop — runs after the SDK's built-in reconnection is exhausted.
+ * Periodically attempts a fresh connectToMAP(), and on success swaps in
+ * the new connection, re-registers agents, and re-arms the listener.
+ */
+function startSlowReconnectLoop() {
+  if (reconnectInterval) return; // already running
+
+  reconnectInterval = setInterval(async () => {
+    process.stderr.write("[sidecar] Attempting MAP reconnection...\n");
+
+    try {
+      const newConn = await connectToMAP({
+        server: MAP_SERVER,
+        scope: MAP_SCOPE,
+        systemId: SYSTEM_ID,
+        credential: AUTH_CREDENTIAL || undefined,
+        onMessage: () => resetInactivityTimer(),
+      });
+
+      if (newConn) {
+        clearInterval(reconnectInterval);
+        reconnectInterval = null;
+
+        connection = newConn;
+        if (commandHandler) commandHandler.setConnection(newConn);
+        attachReconnectionListener(newConn);
+
+        // Re-register active agents so the MAP server knows about them
+        await reRegisterAgents(newConn);
+
+        // Re-subscribe inbox events to the new connection
+        subscribeInboxEvents(newConn);
+
+        process.stderr.write("[sidecar] Reconnected to MAP server\n");
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[sidecar] Reconnection attempt failed: ${err.message}\n`
+      );
+    }
+  }, RECONNECT_INTERVAL_MS);
+}
+
+/**
+ * Re-register all active agents from the registeredAgents Map after
+ * a fresh connection is established.
+ */
+async function reRegisterAgents(conn) {
+  for (const [agentId, meta] of registeredAgents) {
+    try {
+      await conn.spawn({
+        agentId,
+        name: meta.name,
+        role: meta.role,
+        scopes: [MAP_SCOPE],
+        metadata: meta.metadata,
+      });
+    } catch {
+      // Agent may conflict or already exist — best effort
+    }
+  }
+
+  if (registeredAgents.size > 0) {
+    process.stderr.write(
+      `[sidecar] Re-registered ${registeredAgents.size} agent(s) after reconnection\n`
+    );
+  }
+}
+
+/**
+ * Subscribe to inbox message.created events for outbound MAP observability.
+ * Safe to call multiple times — replaces previous listener via the connection ref.
+ */
+function subscribeInboxEvents(conn) {
+  if (!inboxInstance?.events || !conn) return;
+
+  // The event handler closes over `conn` directly, so re-subscribing
+  // with a new connection naturally uses the new connection.
+  // No need to remove old listeners — they reference the old (dead) connection
+  // and will silently fail, which is fine.
+  inboxInstance.events.on("message.created", (message) => {
+    conn.send({ scope: MAP_SCOPE }, {
+      type: "inbox.message",
+      messageId: message.id,
+      from: message.sender_id,
+      to: (message.recipients || []).map((r) => r.agent_id),
+      contentType: message.content?.type || "text",
+      threadTag: message.thread_tag,
+      importance: message.importance,
+    }, { relationship: "broadcast" }).catch(() => {
+      // Best-effort — don't block on MAP delivery
+    });
+  });
+}
 
 // ── Transport Setup ─────────────────────────────────────────────────────────
 
@@ -248,34 +372,33 @@ async function main() {
     await startWebSocketTransport();
   }
 
+  // Attach reconnection listener for WebSocket mode
+  // (mesh mode uses an embedded in-process server, no remote connection to lose)
+  if (transportMode === "websocket") {
+    if (connection) {
+      attachReconnectionListener(connection);
+    } else {
+      // Initial connection failed — start slow retry loop immediately
+      process.stderr.write("[sidecar] Initial MAP connection failed, starting slow retry loop\n");
+      startSlowReconnectLoop();
+    }
+  }
+
   // Subscribe to inbox message.created events for outbound MAP observability
+  subscribeInboxEvents(connection);
   if (inboxInstance?.events && connection) {
-    inboxInstance.events.on("message.created", (message) => {
-      // Emit message event to MAP for external observability (Flows B, E)
-      connection.send({ scope: MAP_SCOPE }, {
-        type: "inbox.message",
-        messageId: message.id,
-        from: message.sender_id,
-        to: (message.recipients || []).map((r) => r.agent_id),
-        contentType: message.content?.type || "text",
-        threadTag: message.thread_tag,
-        importance: message.importance,
-      }, { relationship: "broadcast" }).catch(() => {
-        // Best-effort — don't block on MAP delivery
-      });
-    });
     process.stderr.write("[sidecar] Subscribed to inbox message.created events for MAP bridge\n");
   }
 
   // Start lifecycle UNIX socket server
-  const onCommand = createCommandHandler(connection, MAP_SCOPE, registeredAgents, {
+  commandHandler = createCommandHandler(connection, MAP_SCOPE, registeredAgents, {
     inboxInstance,
     meshPeer,
     transportMode,
   });
   socketServer = createSocketServer(sPaths.socketPath, (command, client) => {
     resetInactivityTimer();
-    onCommand(command, client);
+    commandHandler(command, client);
   });
 
   // Start inactivity timer

@@ -235,8 +235,6 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
                 // Best-effort
               }
             }
-
-            registeredAgents.delete(agentId);
           } else if (conn) {
             // WebSocket mode: use MAP SDK
             try {
@@ -261,9 +259,12 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
                 });
               } catch { /* best-effort */ }
             }
-
-            registeredAgents.delete(agentId);
           }
+
+          // Always clean up local tracking — even if conn is null (during
+          // an outage), we want to remove the agent so it isn't
+          // re-registered when the connection is restored.
+          registeredAgents.delete(agentId);
           respond(client, { ok: true });
           break;
         }

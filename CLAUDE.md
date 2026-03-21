@@ -110,6 +110,7 @@ MAP options:
 - `scope` — MAP scope name (default: `swarm:<template>`)
 - `systemId` — System identifier for federation (default: `system-claude-swarm`)
 - `sidecar` — `"session"` (starts/stops with session, default) or `"persistent"` (user-managed)
+- `reconnectIntervalMs` — Interval in ms for slow reconnection loop after SDK retries are exhausted (default: `60000`)
 - `auth.token` — Authentication token appended as a query parameter to the server URL
 - `auth.param` — Query parameter name for the token (default: `token`)
 
@@ -252,6 +253,7 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `map.scope` | `SWARM_MAP_SCOPE` | string | `""` (derived from template) |
 | `map.systemId` | `SWARM_MAP_SYSTEM_ID` | string | `system-claude-swarm` |
 | `map.sidecar` | `SWARM_MAP_SIDECAR` | string | `session` |
+| `map.reconnectIntervalMs` | `SWARM_MAP_RECONNECT_INTERVAL` | number (ms) | `60000` |
 | `map.auth.token` | `SWARM_MAP_AUTH_TOKEN` | string | `""` |
 | `map.auth.param` | `SWARM_MAP_AUTH_PARAM` | string | `token` |
 | `opentasks.enabled` | `SWARM_OPENTASKS_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |

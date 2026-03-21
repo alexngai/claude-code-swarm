@@ -106,6 +106,9 @@ export async function startSidecar(config, pluginDirOverride, sessionId) {
     if (config.inbox?.enabled) {
       args.push("--inbox-config", JSON.stringify(config.inbox));
     }
+    if (config.map?.reconnectIntervalMs && config.map.reconnectIntervalMs !== DEFAULTS.mapReconnectIntervalMs) {
+      args.push("--reconnect-interval", String(config.map.reconnectIntervalMs));
+    }
     if (config.mesh?.enabled) {
       args.push("--mesh-enabled");
       if (config.mesh.peerId) {

@@ -15,6 +15,7 @@ export const DEFAULTS = {
   mapScope: "swarm:default",
   mapSystemId: "system-claude-swarm",
   mapSidecar: "session",
+  mapReconnectIntervalMs: 60000,
   sessionlogSync: "off",
 };
 
@@ -70,6 +71,7 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
       scope: envStr("SWARM_MAP_SCOPE") ?? project.map?.scope ?? global.map?.scope ?? "",
       systemId: envStr("SWARM_MAP_SYSTEM_ID") ?? project.map?.systemId ?? global.map?.systemId ?? DEFAULTS.mapSystemId,
       sidecar: envStr("SWARM_MAP_SIDECAR") ?? project.map?.sidecar ?? global.map?.sidecar ?? DEFAULTS.mapSidecar,
+      reconnectIntervalMs: parseInt(envStr("SWARM_MAP_RECONNECT_INTERVAL") ?? project.map?.reconnectIntervalMs ?? global.map?.reconnectIntervalMs ?? DEFAULTS.mapReconnectIntervalMs, 10) || DEFAULTS.mapReconnectIntervalMs,
       swarmId: envStr("SWARM_MAP_SWARM_ID") ?? project.map?.swarmId ?? global.map?.swarmId ?? "",
       auth: {
         token: envStr("SWARM_MAP_AUTH_TOKEN") ?? project.map?.auth?.token ?? global.map?.auth?.token ?? "",
