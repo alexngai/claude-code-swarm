@@ -29,6 +29,10 @@
  * @param {object} [opts.transport] - Custom transport for P2P connectivity (optional).
  * @returns {Promise<{peer: object, connection: object}|null>}
  */
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("mesh");
+
 export async function createMeshPeer({ peerId, scope, systemId, onMessage, transport }) {
   try {
     const { MeshPeer } = await import("agentic-mesh");
@@ -54,15 +58,11 @@ export async function createMeshPeer({ peerId, scope, systemId, onMessage, trans
       connection.on("message", onMessage);
     }
 
-    process.stderr.write(
-      `[mesh] MeshPeer started as ${peerId}, agent ${agentName} in scope ${scope}\n`
-    );
+    log.info("MeshPeer started", { peerId, agent: agentName, scope });
 
     return { peer, connection };
   } catch (err) {
-    process.stderr.write(
-      `[mesh] agentic-mesh not available: ${err.message}\n`
-    );
+    log.warn("agentic-mesh not available", { error: err.message });
     return null;
   }
 }
@@ -107,14 +107,10 @@ export async function createMeshInbox({ meshPeer, scope, systemId, socketPath, i
     };
 
     const inbox = await createAgentInbox(opts);
-    process.stderr.write(
-      `[mesh] Agent Inbox started with MeshPeer on ${socketPath}\n`
-    );
+    log.info("Agent Inbox started with MeshPeer", { socketPath });
     return inbox;
   } catch (err) {
-    process.stderr.write(
-      `[mesh] Agent Inbox (mesh mode) not available: ${err.message}\n`
-    );
+    log.warn("Agent Inbox (mesh mode) not available", { error: err.message });
     return null;
   }
 }

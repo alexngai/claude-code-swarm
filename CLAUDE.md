@@ -25,6 +25,7 @@ claude-code-swarm/
 ├── src/                          # Core logic modules
 │   ├── index.mjs                 # Barrel re-export of public API
 │   ├── config.mjs                # Config parsing + defaults
+│   ├── log.mjs                   # Structured leveled logging (JSON Lines + stderr)
 │   ├── paths.mjs                 # Path constants + ensureSwarmDir/ensureMapDir/teamDir
 │   ├── roles.mjs                 # Role reading, matching, writing roles.json
 │   ├── inbox.mjs                 # Inbox read/clear/format/write
@@ -225,6 +226,41 @@ Skill-tree options:
 - `basePath` — Path to skill-tree storage directory (default: `.swarm/skill-tree/`)
 - `defaultProfile` — Default profile when no role-specific criteria exist (default: `""`)
 
+### Logging
+```json
+{
+  "template": "gsd",
+  "log": {
+    "level": "debug",
+    "dir": "/tmp/swarm-logs"
+  }
+}
+```
+
+Structured logging with leveled output (JSON Lines to file, human-readable to stderr). All log output goes through `src/log.mjs` via `createLogger("module")`.
+
+**Log levels** (each level includes all levels above it):
+- `error` — something broke
+- `warn` — degraded but functional (default)
+- `info` — lifecycle events (sidecar started, template loaded, package installed)
+- `debug` — verbose internals (cache hits, socket connects, IPC payloads)
+
+**Per-session log files**: Each Claude Code session writes to its own log file at `<dir>/<sessionId>.log`. The session ID comes from Claude Code's hook data and is available in all entry points (bootstrap, hooks, sidecar).
+
+**Default log directory**: `~/.claude/claude-swarm/tmp/logs/` (always global, not project-scoped).
+
+Log options:
+- `level` — Log level threshold (default: `warn`)
+- `file` — Explicit log file path, overrides per-session paths (default: `""`)
+- `dir` — Directory for per-session log files (default: `~/.claude/claude-swarm/tmp/logs/`)
+- `stderr` — Also write human-readable output to stderr (default: `true`)
+
+Quick debugging:
+```bash
+SWARM_LOG_LEVEL=debug claude    # all levels, per-session file
+SWARM_LOG_LEVEL=info claude     # lifecycle + warnings + errors
+```
+
 ### Available templates
 
 Templates are provided by the openteams package (installed via swarmkit). Built-in templates include:
@@ -270,6 +306,10 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `mesh.enabled` | `SWARM_MESH_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `mesh.peerId` | `SWARM_MESH_PEER_ID` | string | `""` |
 | `mesh.mapServer` | `SWARM_MESH_MAP_SERVER` | string | `""` |
+| `log.level` | `SWARM_LOG_LEVEL` | string | `warn` |
+| `log.file` | `SWARM_LOG_FILE` | string | `""` (per-session default) |
+| `log.dir` | `SWARM_LOG_DIR` | string | `""` (`~/.claude/claude-swarm/tmp/logs/`) |
+| `log.stderr` | `SWARM_LOG_STDERR` | boolean | `true` |
 
 MAP is implicitly enabled when `map.server` is configured (in file or via `SWARM_MAP_SERVER`). Use `SWARM_MAP_ENABLED=false` to explicitly disable.
 
@@ -383,7 +423,8 @@ All logic lives in `src/` as importable ES modules. Scripts in `scripts/` are th
 
 ```
 src/config.mjs            ← readConfig(), resolveScope(), resolveTeamName()
-src/paths.mjs              ← SWARM_DIR, CONFIG_PATH, TMP_DIR, TEAMS_DIR, MAP_DIR, teamDir()
+src/log.mjs                ← createLogger(), init() — structured leveled logging
+src/paths.mjs              ← SWARM_DIR, CONFIG_PATH, TMP_DIR, TEAMS_DIR, MAP_DIR, LOG_PATH, LOGS_DIR, teamDir()
 src/roles.mjs              ← readRoles(), matchRole(), writeRoles()
 src/inbox.mjs              ← readInbox(), clearInbox(), formatInboxAsMarkdown()
 src/map-connection.mjs     ← connectToMAP(), fireAndForget(), fireAndForgetTrajectory()

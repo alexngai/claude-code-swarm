@@ -34,6 +34,8 @@ vi.mock("../paths.mjs", async () => {
     PID_PATH: path.join(tmpDir, "sidecar.pid"),
     MAP_DIR: path.join(tmpDir, "map"),
     SIDECAR_LOG_PATH: path.join(tmpDir, "sidecar.log"),
+    LOG_PATH: path.join(tmpDir, "swarm.log"),
+    LOGS_DIR: path.join(tmpDir, "logs"),
     OPENTASKS_DIR: path.join(tmpDir, "opentasks"),
     INBOX_SOCKET_PATH: path.join(tmpDir, "inbox.sock"),
     teamDir: vi.fn((name) => `${tmpDir}/.swarm/claude-swarm/tmp/teams/${name}`),

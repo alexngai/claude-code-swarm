@@ -9,6 +9,9 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { ROLES_PATH } from "./paths.mjs";
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("roles");
 
 const require = createRequire(import.meta.url);
 
@@ -64,9 +67,7 @@ export function writeRoles(templatePath, outputPath = ROLES_PATH) {
     fs.writeFileSync(outputPath, JSON.stringify(roles, null, 2));
     return roles;
   } catch (err) {
-    process.stderr.write(
-      `Warning: could not write roles.json: ${err.message}\n`
-    );
+    log.warn("could not write roles.json", { error: err.message });
     return null;
   }
 }

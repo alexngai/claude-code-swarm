@@ -94,6 +94,8 @@ export const PID_PATH = path.join(_mapDir, "sidecar.pid");
 export const ROLES_PATH = path.join(_mapDir, "roles.json");
 export const SESSIONLOG_STATE_PATH = path.join(_mapDir, "sessionlog-state.json");
 export const SIDECAR_LOG_PATH = path.join(_mapDir, "sidecar.log");
+export const LOG_PATH = path.join(GLOBAL_BASE, "tmp", "logs", "swarm.log");
+export const LOGS_DIR = path.join(GLOBAL_BASE, "tmp", "logs");
 
 // opentasks runtime state
 export const OPENTASKS_DIR = path.join(_tmpDir, "opentasks");

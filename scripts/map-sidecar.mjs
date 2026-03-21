@@ -24,6 +24,10 @@ import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths } from "../src/p
 import { connectToMAP } from "../src/map-connection.mjs";
 import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
+import { readConfig } from "../src/config.mjs";
+import { createLogger, init as initLog } from "../src/log.mjs";
+
+const log = createLogger("sidecar");
 
 // ── Parse CLI args ──────────────────────────────────────────────────────────
 
@@ -45,6 +49,10 @@ const RECONNECT_INTERVAL_MS = parseInt(getArg("reconnect-interval", ""), 10) || 
 // Auth credential for server-driven auth negotiation (opaque — type determined by server)
 const AUTH_CREDENTIAL = getArg("credential", "");
 
+// Initialize logger with config + session context (before any log calls)
+const _logConfig = readConfig().log;
+initLog({ ..._logConfig, sessionId: SESSION_ID || undefined });
+
 // Mesh transport args
 const MESH_ENABLED = hasFlag("mesh-enabled");
 const MESH_PEER_ID = getArg("mesh-peer-id", "");
@@ -56,7 +64,7 @@ if (inboxConfigJson) {
   try {
     INBOX_CONFIG = JSON.parse(inboxConfigJson);
   } catch {
-    process.stderr.write("[sidecar] Warning: invalid --inbox-config JSON, inbox disabled\n");
+    log.warn("invalid --inbox-config JSON, inbox disabled");
   }
 }
 
@@ -82,7 +90,7 @@ const registeredAgents = new Map();
 function resetInactivityTimer() {
   if (inactivityTimer) clearTimeout(inactivityTimer);
   inactivityTimer = setTimeout(() => {
-    process.stderr.write("[sidecar] Inactivity timeout reached, shutting down\n");
+    log.info("inactivity timeout reached, shutting down");
     shutdown();
   }, INACTIVITY_TIMEOUT_MS);
 }
@@ -90,7 +98,7 @@ function resetInactivityTimer() {
 // ── Shutdown ────────────────────────────────────────────────────────────────
 
 async function shutdown() {
-  process.stderr.write("[sidecar] Shutting down...\n");
+  log.info("shutting down");
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
   if (reconnectInterval) clearInterval(reconnectInterval);
@@ -123,12 +131,12 @@ async function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 process.on("uncaughtException", (err) => {
-  process.stderr.write(`[sidecar] Uncaught exception: ${err.message}\n`);
+  log.error("uncaught exception", { error: err.message });
   shutdown();
 });
 process.on("unhandledRejection", (reason) => {
   const msg = reason instanceof Error ? reason.message : String(reason);
-  process.stderr.write(`[sidecar] Unhandled rejection: ${msg}\n`);
+  log.warn("unhandled rejection", { error: msg });
   // Don't shutdown — log and continue. The rejection is likely from a
   // non-critical SDK operation (e.g. scope-based send, state update).
 });
@@ -145,14 +153,12 @@ function attachReconnectionListener(conn) {
 
   conn.onReconnection((event) => {
     if (event.type === "reconnectFailed") {
-      process.stderr.write(
-        `[sidecar] SDK reconnection exhausted (${event.error?.message || "unknown error"}), starting slow retry loop (${RECONNECT_INTERVAL_MS}ms)\n`
-      );
+      log.warn("SDK reconnection exhausted, starting slow retry loop", { error: event.error?.message, intervalMs: RECONNECT_INTERVAL_MS });
       startSlowReconnectLoop();
     } else if (event.type === "reconnected") {
-      process.stderr.write("[sidecar] SDK reconnected to MAP server\n");
+      log.info("SDK reconnected to MAP server");
     } else if (event.type === "disconnected") {
-      process.stderr.write("[sidecar] Disconnected from MAP server, SDK will attempt reconnection\n");
+      log.warn("disconnected from MAP server, SDK will attempt reconnection");
     }
   });
 }
@@ -166,7 +172,7 @@ function startSlowReconnectLoop() {
   if (reconnectInterval) return; // already running
 
   reconnectInterval = setInterval(async () => {
-    process.stderr.write("[sidecar] Attempting MAP reconnection...\n");
+    log.info("attempting MAP reconnection");
 
     try {
       const newConn = await connectToMAP({
@@ -191,12 +197,10 @@ function startSlowReconnectLoop() {
         // Re-subscribe inbox events to the new connection
         subscribeInboxEvents(newConn);
 
-        process.stderr.write("[sidecar] Reconnected to MAP server\n");
+        log.info("reconnected to MAP server");
       }
     } catch (err) {
-      process.stderr.write(
-        `[sidecar] Reconnection attempt failed: ${err.message}\n`
-      );
+      log.warn("reconnection attempt failed", { error: err.message });
     }
   }, RECONNECT_INTERVAL_MS);
 }
@@ -221,9 +225,7 @@ async function reRegisterAgents(conn) {
   }
 
   if (registeredAgents.size > 0) {
-    process.stderr.write(
-      `[sidecar] Re-registered ${registeredAgents.size} agent(s) after reconnection\n`
-    );
+    log.info("re-registered agents after reconnection", { count: registeredAgents.size });
   }
 }
 
@@ -347,10 +349,10 @@ async function startLegacyAgentInbox(mapConnection) {
     };
 
     const inbox = await createAgentInbox(opts);
-    process.stderr.write(`[sidecar] Agent Inbox started (websocket mode) on ${sPaths.inboxSocketPath}\n`);
+    log.info("Agent Inbox started (websocket mode)", { socketPath: sPaths.inboxSocketPath });
     return inbox;
   } catch (err) {
-    process.stderr.write(`[sidecar] Agent Inbox not available: ${err.message}\n`);
+    log.warn("Agent Inbox not available", { error: err.message });
     return null;
   }
 }
@@ -365,7 +367,7 @@ async function main() {
   if (MESH_ENABLED) {
     const meshOk = await tryMeshTransport();
     if (!meshOk) {
-      process.stderr.write("[sidecar] Mesh transport unavailable, falling back to WebSocket\n");
+      log.warn("mesh transport unavailable, falling back to WebSocket");
       await startWebSocketTransport();
     }
   } else {
@@ -379,7 +381,7 @@ async function main() {
       attachReconnectionListener(connection);
     } else {
       // Initial connection failed — start slow retry loop immediately
-      process.stderr.write("[sidecar] Initial MAP connection failed, starting slow retry loop\n");
+      log.warn("initial MAP connection failed, starting slow retry loop");
       startSlowReconnectLoop();
     }
   }
@@ -387,7 +389,7 @@ async function main() {
   // Subscribe to inbox message.created events for outbound MAP observability
   subscribeInboxEvents(connection);
   if (inboxInstance?.events && connection) {
-    process.stderr.write("[sidecar] Subscribed to inbox message.created events for MAP bridge\n");
+    log.debug("subscribed to inbox message.created events for MAP bridge");
   }
 
   // Start lifecycle UNIX socket server
@@ -406,10 +408,10 @@ async function main() {
 
   const modeLabel = transportMode === "mesh" ? "mesh" : "websocket";
   const inboxLabel = inboxInstance ? " [inbox active]" : "";
-  process.stderr.write(`[sidecar] Ready (${modeLabel})${SESSION_ID ? ` (session: ${SESSION_ID})` : ""}${inboxLabel}\n`);
+  log.info("ready", { transport: modeLabel, sessionId: SESSION_ID || undefined, inbox: !!inboxInstance });
 }
 
 main().catch((err) => {
-  process.stderr.write(`[sidecar] Fatal: ${err.message}\n`);
+  log.error("fatal", { error: err.message });
   process.exit(1);
 });

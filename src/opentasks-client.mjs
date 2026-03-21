@@ -12,6 +12,9 @@
 
 import fs from "fs";
 import path from "path";
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("opentasks");
 import net from "net";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
@@ -157,10 +160,10 @@ export async function ensureDaemon(config) {
     }
 
     if (stderr) {
-      process.stderr.write(`[opentasks-client] Daemon start stderr: ${stderr.trim()}\n`);
+      log.warn("daemon start stderr", { stderr: stderr.trim() });
     }
   } catch (err) {
-    process.stderr.write(`[opentasks-client] Failed to start daemon: ${err.message}\n`);
+    log.error("failed to start daemon", { error: err.message });
   }
 
   return false;

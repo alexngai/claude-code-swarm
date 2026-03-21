@@ -12,6 +12,9 @@
 
 import fs from "fs";
 import net from "net";
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("sidecar");
 
 /**
  * Create a UNIX socket server that accepts NDJSON commands.
@@ -45,14 +48,10 @@ export function createSocketServer(socketPath, onCommand) {
           // Must await the async handler to catch SDK errors;
           // without this, rejections become uncaught and crash the process.
           onCommand(command, client).catch((err) => {
-            process.stderr.write(
-              `[sidecar] Async command error (${command.action}): ${err.message}\n`
-            );
+            log.error("async command error", { action: command.action, error: err.message });
           });
         } catch (err) {
-          process.stderr.write(
-            `[sidecar] Invalid command: ${err.message}\n`
-          );
+          log.warn("invalid command", { error: err.message });
         }
       }
     });
@@ -63,13 +62,11 @@ export function createSocketServer(socketPath, onCommand) {
   });
 
   server.listen(socketPath, () => {
-    process.stderr.write(`[sidecar] Listening on ${socketPath}\n`);
+    log.info("listening", { socketPath });
   });
 
   server.on("error", (err) => {
-    process.stderr.write(
-      `[sidecar] Socket server error: ${err.message}\n`
-    );
+    log.error("socket server error", { error: err.message });
   });
 
   return server;
@@ -160,9 +157,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
 
               respond(client, { ok: true, agent: { agentId, name, role } });
             } catch (err) {
-              process.stderr.write(
-                `[sidecar] spawn (mesh) failed: ${err.message}\n`
-              );
+              log.error("spawn (mesh) failed", { error: err.message });
               respond(client, { ok: false, error: err.message });
             }
           } else if (conn) {
@@ -193,9 +188,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
 
               respond(client, { ok: true, agent: result });
             } catch (err) {
-              process.stderr.write(
-                `[sidecar] spawn failed: ${err.message}\n`
-              );
+              log.error("spawn failed", { error: err.message });
               respond(client, { ok: false, error: err.message });
             }
           } else {
@@ -277,9 +270,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
               });
               respond(client, { ok: true, method: "trajectory" });
             } catch (err) {
-              process.stderr.write(
-                `[sidecar] trajectory/checkpoint not supported, falling back to broadcast: ${err.message}\n`
-              );
+              log.warn("trajectory/checkpoint not supported, falling back to broadcast", { error: err.message });
               await conn.send(
                 { scope },
                 {
@@ -410,9 +401,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
           respond(client, { ok: false, error: `Unknown action: ${action}` });
       }
     } catch (err) {
-      process.stderr.write(
-        `[sidecar] Command error (${action}): ${err.message}\n`
-      );
+      log.error("command error", { action, error: err.message });
       respond(client, { ok: false, error: err.message });
     }
   };

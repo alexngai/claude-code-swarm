@@ -6,6 +6,9 @@
  */
 
 import { resolveScope, resolveTeamName, resolveMapServer, DEFAULTS } from "./config.mjs";
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("map");
 
 /**
  * Connect to a MAP server as an agent.
@@ -59,7 +62,7 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
         const method = connectResult.authRequired.methods[0];
         const authResult = await connection.authenticate({ method, token: credential });
         if (!authResult.success) {
-          process.stderr.write(`[map] Authentication failed: ${authResult.error?.message || "unknown error"}\n`);
+          log.error("authentication failed", { error: authResult.error?.message || "unknown error" });
           return null;
         }
       }
@@ -74,14 +77,10 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
       connection.onMessage(onMessage);
     }
 
-    process.stderr.write(
-      `[map] Connected to ${server} as ${agentName} in scope ${scope}\n`
-    );
+    log.info("connected", { server, agent: agentName, scope });
     return connection;
   } catch (err) {
-    process.stderr.write(
-      `[map] Failed to connect to MAP server: ${err.message}\n`
-    );
+    log.error("failed to connect to MAP server", { error: err.message });
     return null;
   }
 }

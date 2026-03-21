@@ -12,6 +12,9 @@ import { spawn } from "child_process";
 import { SOCKET_PATH, PID_PATH, pluginDir, sessionPaths } from "./paths.mjs";
 import { resolveScope, resolveMapServer, DEFAULTS } from "./config.mjs";
 import { meshFireAndForget } from "./mesh-connection.mjs";
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("sidecar-client");
 
 /**
  * Send a command to the agent-inbox IPC socket and return the response.
@@ -132,7 +135,7 @@ export async function startSidecar(config, pluginDirOverride, sessionId) {
       }
     }
   } catch (err) {
-    process.stderr.write(`[sidecar-client] Start failed: ${err.message}\n`);
+    log.error("start failed", { error: err.message });
   }
 
   return false;

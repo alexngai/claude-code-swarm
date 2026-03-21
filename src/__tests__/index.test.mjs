@@ -111,6 +111,10 @@ describe("index", () => {
   it("exports ensureDaemon", () => expect(typeof index.ensureDaemon).toBe("function"));
   it("exports pushSyncEvent", () => expect(typeof index.pushSyncEvent).toBe("function"));
 
+  // Logging exports
+  it("exports createLogger", () => expect(typeof index.createLogger).toBe("function"));
+  it("exports initLog", () => expect(typeof index.initLog).toBe("function"));
+
   // Bootstrap export
   it("exports bootstrap", () => expect(typeof index.bootstrap).toBe("function"));
 });

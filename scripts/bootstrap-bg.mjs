@@ -11,6 +11,9 @@ import { readConfig, resolveScope } from "../src/config.mjs";
 import { pluginDir } from "../src/paths.mjs";
 import { configureNodePath } from "../src/swarmkit-resolver.mjs";
 import { backgroundInit } from "../src/bootstrap.mjs";
+import { createLogger, init as initLog } from "../src/log.mjs";
+
+const log = createLogger("bootstrap:bg");
 
 try {
   const args = JSON.parse(process.argv[2] || "{}");
@@ -18,10 +21,11 @@ try {
   const dir = pluginDir();
 
   const config = readConfig();
+  initLog({ ...config.log, sessionId });
   configureNodePath(dir);
   const scope = resolveScope(config);
 
   await backgroundInit(config, scope, dir, sessionId);
 } catch (err) {
-  process.stderr.write(`[bootstrap:bg] Error: ${err.message}\n`);
+  log.error("background init failed", { error: err.message });
 }

@@ -25,6 +25,9 @@
  */
 
 import { readConfig, resolveTeamName } from "../src/config.mjs";
+import { createLogger, init as initLog } from "../src/log.mjs";
+
+const log = createLogger("map-hook");
 import { readRoles, matchRole } from "../src/roles.mjs";
 import { formatInboxAsMarkdown } from "../src/inbox.mjs";
 import { sendToInbox } from "../src/sidecar-client.mjs";
@@ -63,10 +66,7 @@ function readStdin() {
 
 // ── Action handlers ───────────────────────────────────────────────────────────
 
-async function handleInject() {
-  // Read stdin to get session_id for per-session inbox routing
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
+async function handleInject(hookData, sessionId) {
   const sPaths = sessionPaths(sessionId);
   const config = readConfig();
 
@@ -99,48 +99,37 @@ async function handleInject() {
   if (output) process.stdout.write(output);
 }
 
-async function handleTurnCompleted() {
+async function handleTurnCompleted(hookData, sessionId) {
   const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
 
   // Update sidecar state to idle (server auto-emits agent_state_changed)
   const stopReason = hookData.stop_reason || "end_turn";
   await sendCommand(config, buildStateCommand(null, "idle", { lastStopReason: stopReason }), sessionId);
 }
 
-async function handleSessionlogSync() {
+async function handleSessionlogSync(hookData, sessionId) {
   const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
-
   await syncSessionlog(config, sessionId);
 }
 
-async function handleSubagentStart() {
+async function handleSubagentStart(hookData, sessionId) {
   const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
   const teamName = resolveTeamName(config);
 
   // Spawn subagent in MAP (server auto-emits agent_registered)
   await sendCommand(config, buildSubagentSpawnCommand(hookData, teamName), sessionId);
 }
 
-async function handleSubagentStop() {
+async function handleSubagentStop(hookData, sessionId) {
   const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
   const teamName = resolveTeamName(config);
 
   // Mark subagent done (server auto-emits agent_unregistered)
   await sendCommand(config, buildSubagentDoneCommand(hookData, teamName), sessionId);
 }
 
-async function handleTeammateIdle() {
+async function handleTeammateIdle(hookData, sessionId) {
   const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
   const roles = readRoles();
   const teamName = resolveTeamName(config);
 
@@ -154,10 +143,8 @@ async function handleTeammateIdle() {
   await sendCommand(config, buildStateCommand(agentId, "idle", { teammateName }), sessionId);
 }
 
-async function handleTaskCompletedHook() {
+async function handleTaskCompletedHook(hookData, sessionId) {
   const config = readConfig();
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
   const roles = readRoles();
   const teamName = resolveTeamName(config);
 
@@ -168,56 +155,55 @@ async function handleTaskCompletedHook() {
   await handleTaskStatusCompleted(config, hookData, teamName, matchedRole, sessionId);
 }
 
-async function handleOpentasksMcpUsed() {
+async function handleOpentasksMcpUsed(hookData, sessionId) {
   const config = readConfig();
   if (!config.map.enabled) return; // Only bridge when MAP is enabled
 
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
   const commands = buildOpentasksBridgeCommands(hookData);
   for (const cmd of commands) {
     await sendCommand(config, cmd, sessionId);
   }
 }
 
-async function handleNativeTaskCreated() {
+async function handleNativeTaskCreated(hookData, sessionId) {
   const config = readConfig();
   if (!config.map?.enabled) return;
 
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
   await handleNativeTaskCreatedEvent(config, hookData, sessionId);
 }
 
-async function handleNativeTaskUpdated() {
+async function handleNativeTaskUpdated(hookData, sessionId) {
   const config = readConfig();
   if (!config.map?.enabled) return;
 
-  const hookData = await readStdin();
-  const sessionId = hookData.session_id || null;
   await handleNativeTaskUpdatedEvent(config, hookData, sessionId);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+  const hookData = await readStdin();
+  const sessionId = hookData.session_id || null;
+  const config = readConfig();
+  initLog({ ...config.log, sessionId });
+
   try {
     switch (action) {
-      case "inject": await handleInject(); break;
-      case "turn-completed": await handleTurnCompleted(); break;
-      case "sessionlog-sync": await handleSessionlogSync(); break;
-      case "subagent-start": await handleSubagentStart(); break;
-      case "subagent-stop": await handleSubagentStop(); break;
-      case "teammate-idle": await handleTeammateIdle(); break;
-      case "task-completed": await handleTaskCompletedHook(); break;
-      case "opentasks-mcp-used": await handleOpentasksMcpUsed(); break;
-      case "native-task-created": await handleNativeTaskCreated(); break;
-      case "native-task-updated": await handleNativeTaskUpdated(); break;
+      case "inject": await handleInject(hookData, sessionId); break;
+      case "turn-completed": await handleTurnCompleted(hookData, sessionId); break;
+      case "sessionlog-sync": await handleSessionlogSync(hookData, sessionId); break;
+      case "subagent-start": await handleSubagentStart(hookData, sessionId); break;
+      case "subagent-stop": await handleSubagentStop(hookData, sessionId); break;
+      case "teammate-idle": await handleTeammateIdle(hookData, sessionId); break;
+      case "task-completed": await handleTaskCompletedHook(hookData, sessionId); break;
+      case "opentasks-mcp-used": await handleOpentasksMcpUsed(hookData, sessionId); break;
+      case "native-task-created": await handleNativeTaskCreated(hookData, sessionId); break;
+      case "native-task-updated": await handleNativeTaskUpdated(hookData, sessionId); break;
       default:
-        process.stderr.write(`[map-hook] Unknown action: ${action}\n`);
+        log.warn("unknown action", { action });
     }
   } catch (err) {
-    process.stderr.write(`[map-hook] Error in ${action}: ${err.message}\n`);
+    log.error("hook action failed", { action, error: err.message });
   }
 }
 

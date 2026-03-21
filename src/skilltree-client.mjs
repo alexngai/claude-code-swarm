@@ -12,6 +12,9 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { getGlobalNodeModules } from "./swarmkit-resolver.mjs";
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("skilltree");
 
 const require = createRequire(import.meta.url);
 
@@ -130,7 +133,7 @@ export async function compileRoleLoadout(roleName, criteria, config) {
       await bank.shutdown();
     }
   } catch (err) {
-    process.stderr.write(`[skilltree] Warning: loadout compilation failed for ${roleName}: ${err.message}\n`);
+    log.warn("loadout compilation failed", { role: roleName, error: err.message });
     return "";
   }
 }

@@ -117,6 +117,12 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
       peerId: envStr("SWARM_MESH_PEER_ID") ?? project.mesh?.peerId ?? global.mesh?.peerId ?? "",
       mapServer: envStr("SWARM_MESH_MAP_SERVER") ?? project.mesh?.mapServer ?? global.mesh?.mapServer ?? "",
     },
+    log: {
+      level: envStr("SWARM_LOG_LEVEL") ?? project.log?.level ?? global.log?.level ?? "warn",
+      file: envStr("SWARM_LOG_FILE") ?? project.log?.file ?? global.log?.file ?? "",
+      dir: envStr("SWARM_LOG_DIR") ?? project.log?.dir ?? global.log?.dir ?? "",
+      stderr: envBool("SWARM_LOG_STDERR") ?? project.log?.stderr ?? global.log?.stderr ?? true,
+    },
   };
 }
 

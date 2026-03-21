@@ -12,6 +12,9 @@ import { createRequire } from "module";
 import { getGlobalNodeModules } from "./swarmkit-resolver.mjs";
 import { teamDir } from "./paths.mjs";
 import { writeRoles } from "./roles.mjs";
+import { createLogger } from "./log.mjs";
+
+const log = createLogger("template");
 import { readConfig } from "./config.mjs";
 
 const require = createRequire(import.meta.url);
@@ -161,7 +164,7 @@ export async function loadTeam(templateName) {
           fs.writeFileSync(loadoutsPath, JSON.stringify(loadouts, null, 2), "utf-8");
         }
       } catch (err) {
-        process.stderr.write(`[template] Warning: skill loadout compilation failed: ${err.message}\n`);
+        log.warn("skill loadout compilation failed", { error: err.message });
       }
     }
   }

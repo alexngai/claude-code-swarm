@@ -13,9 +13,12 @@
 
 import { bootstrap } from "../src/bootstrap.mjs";
 import { formatBootstrapContext } from "../src/context-output.mjs";
+import { createLogger } from "../src/log.mjs";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import path from "path";
+
+const log = createLogger("bootstrap");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,7 +78,7 @@ try {
   );
   child.unref();
 } catch (err) {
-  process.stderr.write(`[bootstrap] Error: ${err.message}\n`);
+  log.error("bootstrap failed", { error: err.message });
   // Still output something useful
   process.stdout.write("## Claude Code Swarm\n\nUse `/swarm` to launch a team.\n");
 }

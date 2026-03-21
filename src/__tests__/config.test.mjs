@@ -520,6 +520,153 @@ describe("config", () => {
     });
   });
 
+  describe("readConfig — log fields", () => {
+    let tmpDir;
+    let noGlobal;
+    beforeEach(() => {
+      tmpDir = makeTmpDir();
+      noGlobal = path.join(tmpDir, "no-global.json");
+    });
+    afterEach(() => { cleanupTmpDir(tmpDir); });
+
+    it("defaults log level to warn", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.level).toBe("warn");
+    });
+
+    it("defaults log file to empty string", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.file).toBe("");
+    });
+
+    it("defaults log dir to empty string", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.dir).toBe("");
+    });
+
+    it("defaults log stderr to true", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.stderr).toBe(true);
+    });
+
+    it("reads log level from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { level: "debug" },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.level).toBe("debug");
+    });
+
+    it("reads log dir from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { dir: "/tmp/my-logs" },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.dir).toBe("/tmp/my-logs");
+    });
+
+    it("reads log file from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { file: "/tmp/swarm.log" },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.file).toBe("/tmp/swarm.log");
+    });
+
+    it("reads log stderr false from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { stderr: false },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.log.stderr).toBe(false);
+    });
+
+    it("global log config falls through when project has no log config", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        log: { level: "info", dir: "/global/logs" },
+      }));
+      const projectPath = path.join(tmpDir, "nonexistent.json");
+      const config = readConfig(projectPath, globalPath);
+      expect(config.log.level).toBe("info");
+      expect(config.log.dir).toBe("/global/logs");
+    });
+
+    it("project log config overrides global", () => {
+      const globalPath = writeFile(tmpDir, "global.json", JSON.stringify({
+        log: { level: "info" },
+      }));
+      const projectPath = writeFile(tmpDir, "project.json", JSON.stringify({
+        log: { level: "debug" },
+      }));
+      const config = readConfig(projectPath, globalPath);
+      expect(config.log.level).toBe("debug");
+    });
+  });
+
+  describe("readConfig — log env var overrides", () => {
+    let tmpDir;
+    let noGlobal;
+    const savedEnv = {};
+    beforeEach(() => {
+      tmpDir = makeTmpDir();
+      noGlobal = path.join(tmpDir, "no-global.json");
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith("SWARM_LOG")) {
+          savedEnv[key] = process.env[key];
+        }
+      }
+    });
+    afterEach(() => {
+      cleanupTmpDir(tmpDir);
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith("SWARM_LOG")) {
+          if (savedEnv[key] !== undefined) {
+            process.env[key] = savedEnv[key];
+          } else {
+            delete process.env[key];
+          }
+        }
+      }
+      Object.keys(savedEnv).forEach((k) => delete savedEnv[k]);
+    });
+
+    it("SWARM_LOG_LEVEL overrides config file", () => {
+      process.env.SWARM_LOG_LEVEL = "debug";
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { level: "error" },
+      }));
+      expect(readConfig(configPath, noGlobal).log.level).toBe("debug");
+    });
+
+    it("SWARM_LOG_FILE overrides config file", () => {
+      process.env.SWARM_LOG_FILE = "/env/swarm.log";
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { file: "/config/swarm.log" },
+      }));
+      expect(readConfig(configPath, noGlobal).log.file).toBe("/env/swarm.log");
+    });
+
+    it("SWARM_LOG_DIR overrides config file", () => {
+      process.env.SWARM_LOG_DIR = "/env/logs";
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { dir: "/config/logs" },
+      }));
+      expect(readConfig(configPath, noGlobal).log.dir).toBe("/env/logs");
+    });
+
+    it("SWARM_LOG_STDERR overrides config file", () => {
+      process.env.SWARM_LOG_STDERR = "false";
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        log: { stderr: true },
+      }));
+      expect(readConfig(configPath, noGlobal).log.stderr).toBe(false);
+    });
+  });
+
   describe("readConfig — auth fields", () => {
     let tmpDir;
     let noGlobal;

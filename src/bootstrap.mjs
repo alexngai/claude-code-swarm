@@ -13,6 +13,9 @@ import fs from "fs";
 import { execSync } from "child_process";
 import { readConfig, resolveScope, resolveTeamName } from "./config.mjs";
 import { SOCKET_PATH, MAP_DIR, pluginDir, ensureSwarmDir, ensureOpentasksDir, ensureSessionDir, listSessionDirs } from "./paths.mjs";
+import { createLogger, init as initLog } from "./log.mjs";
+
+const log = createLogger("bootstrap");
 import { findSocketPath, isDaemonAlive, ensureDaemon } from "./opentasks-client.mjs";
 import { loadTeam } from "./template.mjs";
 import { killSidecar, startSidecar, sendToInbox } from "./sidecar-client.mjs";
@@ -28,14 +31,14 @@ function installLocalDeps(dir) {
   const nodeModules = `${dir}/node_modules`;
   if (fs.existsSync(nodeModules)) return;
 
-  process.stderr.write("Installing claude-code-swarm dependencies...\n");
+  log.info("installing local dependencies");
   try {
     execSync("npm install --production", {
       cwd: dir,
       stdio: ["ignore", "ignore", "pipe"],
     });
   } catch (err) {
-    process.stderr.write(`Warning: npm install failed: ${err.message}\n`);
+    log.warn("npm install failed", { error: err.message });
   }
 }
 
@@ -77,7 +80,7 @@ function getRequiredGlobalPackages(config) {
 async function ensureGlobalPackages(config) {
   const swarmkit = await resolveSwarmkit();
   if (!swarmkit) {
-    process.stderr.write("[bootstrap] swarmkit not available, skipping global package check\n");
+    log.warn("swarmkit not available, skipping global package check");
     return;
   }
 
@@ -101,14 +104,14 @@ async function ensureGlobalPackages(config) {
 
   if (missing.length === 0) return;
 
-  process.stderr.write(`[bootstrap] Installing missing packages: ${missing.join(", ")}...\n`);
+  log.info("installing missing packages", { packages: missing });
   try {
     const results = await swarmkit.installPackages(missing);
     for (const r of results) {
       if (r.success) {
-        process.stderr.write(`[bootstrap] Installed ${r.package}@${r.version}\n`);
+        log.info("installed package", { package: r.package, version: r.version });
       } else {
-        process.stderr.write(`[bootstrap] Warning: failed to install ${r.package}: ${r.error}\n`);
+        log.warn("failed to install package", { package: r.package, error: r.error });
       }
     }
     const installed = results.filter((r) => r.success).map((r) => r.package);
@@ -120,7 +123,7 @@ async function ensureGlobalPackages(config) {
       }
     }
   } catch (err) {
-    process.stderr.write(`[bootstrap] Warning: global package install failed: ${err.message}\n`);
+    log.warn("global package install failed", { error: err.message });
   }
 }
 
@@ -284,7 +287,7 @@ export async function backgroundInit(config, scope, dir, sessionId) {
         cleanupStaleSessions();
         tasks.push(
           startSessionSidecar(config, scope, dir, sessionId).then((status) => {
-            process.stderr.write(`[bootstrap:bg] MAP: ${status}\n`);
+            log.info("MAP sidecar status", { status });
           })
         );
       }
@@ -328,7 +331,7 @@ export async function backgroundInit(config, scope, dir, sessionId) {
 
     await Promise.allSettled(tasks);
   } catch (err) {
-    process.stderr.write(`[bootstrap:bg] Error: ${err.message}\n`);
+    log.error("background init failed", { error: err.message });
   }
 }
 
@@ -350,6 +353,9 @@ export async function bootstrap(pluginDirOverride, sessionId) {
   // 1. Read config
   const config = readConfig();
 
+  // 1a. Initialize logger from config (env vars still take priority)
+  initLog({ ...config.log, sessionId });
+
   // 1b. Configure NODE_PATH (global + local node_modules)
   configureNodePath(dir);
 
@@ -363,10 +369,10 @@ export async function bootstrap(pluginDirOverride, sessionId) {
       if (result.success) {
         team = result;
       } else {
-        process.stderr.write(`[bootstrap] Warning: failed to load template '${config.template}': ${result.error}\n`);
+        log.warn("failed to load template", { template: config.template, error: result.error });
       }
     } catch (err) {
-      process.stderr.write(`[bootstrap] Warning: template loading failed: ${err.message}\n`);
+      log.warn("template loading failed", { error: err.message });
     }
   }
 

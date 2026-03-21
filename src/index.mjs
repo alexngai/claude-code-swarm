@@ -127,5 +127,8 @@ export {
   inferProfileFromRole,
 } from "./skilltree-client.mjs";
 
+// Logging
+export { createLogger, init as initLog } from "./log.mjs";
+
 // Bootstrap
 export { bootstrap } from "./bootstrap.mjs";
