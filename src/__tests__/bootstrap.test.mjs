@@ -19,6 +19,7 @@ vi.mock("../sidecar-client.mjs", () => ({
 vi.mock("../sessionlog.mjs", () => ({
   checkSessionlogStatus: vi.fn(() => "not installed"),
   syncSessionlog: vi.fn().mockResolvedValue(undefined),
+  annotateSwarmSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../paths.mjs", async () => {
@@ -80,7 +81,7 @@ vi.mock("../swarmkit-resolver.mjs", () => ({
 const { bootstrap, backgroundInit } = await import("../bootstrap.mjs");
 const { readConfig } = await import("../config.mjs");
 const { killSidecar, startSidecar } = await import("../sidecar-client.mjs");
-const { checkSessionlogStatus, syncSessionlog } = await import("../sessionlog.mjs");
+const { checkSessionlogStatus, syncSessionlog, annotateSwarmSession } = await import("../sessionlog.mjs");
 const { pluginDir, ensureOpentasksDir, ensureSessionDir, listSessionDirs } = await import("../paths.mjs");
 const { findSocketPath, isDaemonAlive, ensureDaemon } = await import("../opentasks-client.mjs");
 const { resolveSwarmkit, configureNodePath } = await import("../swarmkit-resolver.mjs");
@@ -416,6 +417,20 @@ describe("bootstrap", () => {
         const config = makeConfig({ mapEnabled: true, sessionlogSync: "full" });
         await backgroundInit(config, "swarm:test", pluginDir(), "session-sync");
         expect(syncSessionlog).toHaveBeenCalledWith(expect.anything(), "session-sync");
+      });
+    });
+
+    describe("sessionlog annotation", () => {
+      it("annotates session when sessionlog is enabled", async () => {
+        const config = makeConfig({ sessionlogEnabled: true });
+        await backgroundInit(config, "swarm:test", pluginDir(), "session-abc");
+        expect(annotateSwarmSession).toHaveBeenCalledWith(expect.anything(), "session-abc");
+      });
+
+      it("does not annotate when sessionlog is disabled", async () => {
+        const config = makeConfig({ sessionlogEnabled: false });
+        await backgroundInit(config, "swarm:test", pluginDir(), "session-abc");
+        expect(annotateSwarmSession).not.toHaveBeenCalled();
       });
     });
 

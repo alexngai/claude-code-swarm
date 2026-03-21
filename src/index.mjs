@@ -83,6 +83,7 @@ export {
   findActiveSession,
   buildTrajectoryCheckpoint,
   syncSessionlog,
+  annotateSwarmSession,
 } from "./sessionlog.mjs";
 
 // Template

@@ -19,7 +19,7 @@ const log = createLogger("bootstrap");
 import { findSocketPath, isDaemonAlive, ensureDaemon } from "./opentasks-client.mjs";
 import { loadTeam } from "./template.mjs";
 import { killSidecar, startSidecar, sendToInbox } from "./sidecar-client.mjs";
-import { checkSessionlogStatus, syncSessionlog } from "./sessionlog.mjs";
+import { checkSessionlogStatus, syncSessionlog, annotateSwarmSession } from "./sessionlog.mjs";
 import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
 
 /**
@@ -316,9 +316,12 @@ export async function backgroundInit(config, scope, dir, sessionId) {
       );
     }
 
-    // Sessionlog sync
+    // Sessionlog sync + swarm annotation
     if (config.map.enabled && config.sessionlog.sync !== "off") {
       tasks.push(syncSessionlog(config, sessionId).catch(() => {}));
+    }
+    if (config.sessionlog.enabled) {
+      tasks.push(annotateSwarmSession(config, sessionId).catch(() => {}));
     }
 
     // OpenTasks daemon

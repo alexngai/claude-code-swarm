@@ -2,14 +2,15 @@
  * sessionlog.mjs — Sessionlog integration for claude-code-swarm
  *
  * Detects active sessionlog sessions, builds trajectory checkpoints,
- * and syncs session data to MAP via the trajectory protocol.
+ * syncs session data to MAP via the trajectory protocol, and annotates
+ * sessions with swarm metadata for cross-session correlation.
  */
 
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import { SESSIONLOG_DIR, SESSIONLOG_STATE_PATH, sessionPaths } from "./paths.mjs";
-import { resolveTeamName } from "./config.mjs";
+import { resolveTeamName, resolveScope } from "./config.mjs";
 import { sendToSidecar, ensureSidecar } from "./sidecar-client.mjs";
 import { fireAndForgetTrajectory } from "./map-connection.mjs";
 
@@ -162,5 +163,40 @@ export async function syncSessionlog(config, sessionId) {
     );
   } catch {
     // Non-critical
+  }
+}
+
+/**
+ * Annotate the current sessionlog session with swarm metadata.
+ * Uses sessionlog's store.annotate() for atomic merge.
+ * Best-effort — never throws.
+ */
+export async function annotateSwarmSession(config, sessionId) {
+  if (!sessionId) return;
+
+  let createSessionStore;
+  try {
+    ({ createSessionStore } = await import("sessionlog"));
+  } catch {
+    // sessionlog not available as a module
+    return;
+  }
+
+  const teamName = resolveTeamName(config);
+  const scope = resolveScope(config);
+
+  const annotations = {
+    swarmId: `${teamName}-${sessionId}`,
+    teamName,
+    template: config.template || "",
+    scope,
+  };
+
+  try {
+    const store = createSessionStore();
+    if (typeof store.annotate !== "function") return; // requires sessionlog >=0.0.6
+    await store.annotate(sessionId, annotations);
+  } catch {
+    // Non-critical — session may not exist yet or annotate failed
   }
 }
