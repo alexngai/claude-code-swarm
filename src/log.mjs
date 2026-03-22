@@ -49,11 +49,14 @@ function resolveFromEnv() {
 
 /**
  * Resolve the log file path for a session.
- * Returns <logsDir>/<sessionId>.log, creating the directory if needed.
+ * Returns <logsDir>/<timestamp>_<sessionId>.log, creating the directory if needed.
+ * Timestamp prefix (YYYYMMDD-HHmmss) makes files sortable chronologically.
  */
 function sessionLogPath(sessionId, logsDir) {
   const dir = logsDir || _logsDir || LOGS_DIR;
-  const logPath = path.join(dir, `${sessionId}.log`);
+  const now = new Date();
+  const ts = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const logPath = path.join(dir, `${ts}_${sessionId}.log`);
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch {

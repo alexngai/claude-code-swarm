@@ -1,24 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { makeTmpDir, cleanupTmpDir } from "./helpers.mjs";
 
+// Create a shared temp dir for mock paths
+const mockBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "log-test-"));
+
 // Mock paths.mjs to use temp directories
-let tmpDir;
 vi.mock("../paths.mjs", () => {
-  const os = require("os");
-  const path = require("path");
-  const fs = require("fs");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "log-test-"));
   return {
-    LOG_PATH: path.join(dir, "swarm.log"),
-    LOGS_DIR: path.join(dir, "logs"),
+    LOG_PATH: path.join(mockBaseDir, "swarm.log"),
+    LOGS_DIR: path.join(mockBaseDir, "logs"),
   };
 });
 
 // Import after mock
 const { createLogger, init, _reset } = await import("../log.mjs");
 const { LOG_PATH, LOGS_DIR } = await import("../paths.mjs");
+
+/** Find log files in a directory matching a session ID pattern */
+function findSessionLog(dir, sessionId) {
+  if (!fs.existsSync(dir)) return null;
+  const files = fs.readdirSync(dir).filter(
+    (f) => f.endsWith(`_${sessionId}.log`)
+  );
+  return files.length > 0 ? path.join(dir, files[0]) : null;
+}
 
 describe("log", () => {
   const savedEnv = {};
@@ -83,7 +91,6 @@ describe("log", () => {
       log.warn("wrn");
       log.info("inf");
       log.debug("dbg");
-      // error + warn should be written, info + debug should not
       expect(stderrSpy).toHaveBeenCalledTimes(2);
       expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("err"));
       expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("wrn"));
@@ -107,7 +114,7 @@ describe("log", () => {
       log.warn("w");
       log.info("i");
       log.debug("d");
-      expect(stderrSpy).toHaveBeenCalledTimes(3); // error, warn, info
+      expect(stderrSpy).toHaveBeenCalledTimes(3);
     });
 
     it("respects SWARM_LOG_LEVEL=debug (all levels)", () => {
@@ -174,11 +181,9 @@ describe("log", () => {
       log.warn("msg", { level: "overwrite", ts: "fake", extra: 42 });
       const content = fs.readFileSync(LOG_PATH, "utf-8");
       const entry = JSON.parse(content.trim());
-      // Base fields preserved
       expect(entry.level).toBe("warn");
       expect(entry.mod).toBe("test");
       expect(entry.ts).not.toBe("fake");
-      // Data nested under data key
       expect(entry.data.level).toBe("overwrite");
       expect(entry.data.ts).toBe("fake");
       expect(entry.data.extra).toBe(42);
@@ -256,7 +261,6 @@ describe("log", () => {
       process.env.SWARM_LOG_FILE = "/nonexistent/path/log.log";
       _reset();
       const log = createLogger("test");
-      // Should not throw
       expect(() => log.warn("no crash")).not.toThrow();
     });
   });
@@ -309,19 +313,29 @@ describe("log", () => {
       stderrSpy.mockRestore();
     });
 
-    it("init({ sessionId }) writes to <LOGS_DIR>/<sessionId>.log", () => {
+    it("init({ sessionId }) writes to <LOGS_DIR>/<timestamp>_<sessionId>.log", () => {
       init({ sessionId: "sess-abc123" });
       const log = createLogger("test");
       log.warn("session log");
 
-      const expectedPath = path.join(LOGS_DIR, "sess-abc123.log");
-      expect(fs.existsSync(expectedPath)).toBe(true);
-      const entry = JSON.parse(fs.readFileSync(expectedPath, "utf-8").trim());
+      const logFile = findSessionLog(LOGS_DIR, "sess-abc123");
+      expect(logFile).not.toBeNull();
+      const entry = JSON.parse(fs.readFileSync(logFile, "utf-8").trim());
       expect(entry.msg).toBe("session log");
     });
 
+    it("session log filename has timestamp prefix (YYYYMMDD-HHmmss)", () => {
+      init({ sessionId: "sess-ts-check" });
+      const log = createLogger("test");
+      log.warn("check timestamp");
+
+      const files = fs.readdirSync(LOGS_DIR).filter((f) => f.includes("sess-ts-check"));
+      expect(files).toHaveLength(1);
+      // Format: YYYYMMDD-HHmmss_sessionId.log
+      expect(files[0]).toMatch(/^\d{8}-\d{6}_sess-ts-check\.log$/);
+    });
+
     it("creates the logs directory if it does not exist", () => {
-      // LOGS_DIR should not exist yet (cleaned in beforeEach)
       expect(fs.existsSync(LOGS_DIR)).toBe(false);
       init({ sessionId: "sess-create-dir" });
       const log = createLogger("test");
@@ -334,16 +348,16 @@ describe("log", () => {
       const log1 = createLogger("test");
       log1.warn("from session 1");
 
-      // Reset and init with different session
       _reset();
       init({ sessionId: "sess-2" });
       const log2 = createLogger("test");
       log2.warn("from session 2");
 
-      const file1 = path.join(LOGS_DIR, "sess-1.log");
-      const file2 = path.join(LOGS_DIR, "sess-2.log");
-      expect(fs.existsSync(file1)).toBe(true);
-      expect(fs.existsSync(file2)).toBe(true);
+      const file1 = findSessionLog(LOGS_DIR, "sess-1");
+      const file2 = findSessionLog(LOGS_DIR, "sess-2");
+      expect(file1).not.toBeNull();
+      expect(file2).not.toBeNull();
+      expect(file1).not.toBe(file2);
       expect(JSON.parse(fs.readFileSync(file1, "utf-8").trim()).msg).toBe("from session 1");
       expect(JSON.parse(fs.readFileSync(file2, "utf-8").trim()).msg).toBe("from session 2");
     });
@@ -358,8 +372,7 @@ describe("log", () => {
       log.warn("goes to env file");
 
       expect(fs.existsSync(customPath)).toBe(true);
-      const sessionPath = path.join(LOGS_DIR, "sess-ignored.log");
-      expect(fs.existsSync(sessionPath)).toBe(false);
+      expect(findSessionLog(LOGS_DIR, "sess-ignored")).toBeNull();
       cleanupTmpDir(customDir);
     });
 
@@ -371,8 +384,7 @@ describe("log", () => {
       log.warn("goes to explicit file");
 
       expect(fs.existsSync(customPath)).toBe(true);
-      const sessionPath = path.join(LOGS_DIR, "sess-ignored.log");
-      expect(fs.existsSync(sessionPath)).toBe(false);
+      expect(findSessionLog(LOGS_DIR, "sess-ignored")).toBeNull();
       cleanupTmpDir(customDir);
     });
   });
@@ -392,8 +404,8 @@ describe("log", () => {
       const log = createLogger("test");
       log.warn("custom dir");
 
-      const expectedPath = path.join(customDir, "sess-custom-dir.log");
-      expect(fs.existsSync(expectedPath)).toBe(true);
+      const logFile = findSessionLog(customDir, "sess-custom-dir");
+      expect(logFile).not.toBeNull();
       cleanupTmpDir(customDir);
     });
 
@@ -406,8 +418,8 @@ describe("log", () => {
       const log = createLogger("test");
       log.warn("env dir wins");
 
-      expect(fs.existsSync(path.join(envDir, "sess-env-dir.log"))).toBe(true);
-      expect(fs.existsSync(path.join(initDir, "sess-env-dir.log"))).toBe(false);
+      expect(findSessionLog(envDir, "sess-env-dir")).not.toBeNull();
+      expect(findSessionLog(initDir, "sess-env-dir")).toBeNull();
       cleanupTmpDir(envDir);
       cleanupTmpDir(initDir);
     });
@@ -419,9 +431,7 @@ describe("log", () => {
       const log = createLogger("test");
       log.warn("no session");
 
-      // Should write to default LOG_PATH, not to customDir
       expect(fs.existsSync(LOG_PATH)).toBe(true);
-      // No session log files in customDir
       const files = fs.existsSync(customDir)
         ? fs.readdirSync(customDir).filter((f) => f.endsWith(".log"))
         : [];
@@ -435,11 +445,9 @@ describe("log", () => {
       const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => {});
       const log = createLogger("test");
 
-      // Default: warn level
       log.info("should not appear");
       expect(spy).not.toHaveBeenCalled();
 
-      // Reset and set to info
       _reset();
       init({ level: "info" });
       log.info("should appear");
@@ -464,7 +472,6 @@ describe("log", () => {
       const log = createLogger("test");
       log.warn("w");
       log.info("i");
-      // Invalid level → falls back to warn, so only warn and above
       expect(stderrSpy).toHaveBeenCalledTimes(1);
     });
 

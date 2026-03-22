@@ -358,6 +358,7 @@ export async function bootstrap(pluginDirOverride, sessionId) {
 
   // 1a. Initialize logger from config (env vars still take priority)
   initLog({ ...config.log, sessionId });
+  log.info("session started", { sessionId, template: config.template || "(none)" });
 
   // 1b. Configure NODE_PATH (global + local node_modules)
   configureNodePath(dir);
