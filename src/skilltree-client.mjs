@@ -10,47 +10,23 @@
 
 import fs from "fs";
 import path from "path";
-import { createRequire } from "module";
-import { getGlobalNodeModules } from "./swarmkit-resolver.mjs";
+import { resolvePackage } from "./swarmkit-resolver.mjs";
 import { createLogger } from "./log.mjs";
 
 const log = createLogger("skilltree");
-
-const require = createRequire(import.meta.url);
 
 let _skillTree = undefined;
 
 /**
  * Load the skill-tree module. Returns null if not available.
- * Tries local require first, then falls back to global node_modules.
+ * Uses resolvePackage() for consistent global fallback resolution.
  */
-function loadSkillTree() {
+async function loadSkillTree() {
   if (_skillTree !== undefined) return _skillTree;
 
-  // 1. Local require (works if skill-tree is in node_modules or NODE_PATH)
-  try {
-    _skillTree = require("skill-tree");
-    return _skillTree;
-  } catch {
-    // Not locally available
-  }
-
-  // 2. Global node_modules fallback (where swarmkit installs it)
-  const globalNm = getGlobalNodeModules();
-  if (globalNm) {
-    const globalPath = path.join(globalNm, "skill-tree");
-    if (fs.existsSync(globalPath)) {
-      try {
-        _skillTree = require(globalPath);
-        return _skillTree;
-      } catch {
-        // require failed
-      }
-    }
-  }
-
-  _skillTree = null;
-  return null;
+  const mod = await resolvePackage("skill-tree");
+  _skillTree = mod || null;
+  return _skillTree;
 }
 
 /**
@@ -93,7 +69,7 @@ export function parseSkillTreeExtension(manifest) {
  * @returns {Promise<string>} Rendered loadout markdown, or empty string on failure
  */
 export async function compileRoleLoadout(roleName, criteria, config) {
-  const st = loadSkillTree();
+  const st = await loadSkillTree();
   if (!st?.createSkillBank) return "";
 
   try {

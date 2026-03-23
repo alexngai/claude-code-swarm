@@ -7,6 +7,7 @@
 
 import { resolveScope, resolveTeamName, resolveMapServer, DEFAULTS } from "./config.mjs";
 import { createLogger } from "./log.mjs";
+import { resolvePackage } from "./swarmkit-resolver.mjs";
 
 const log = createLogger("map");
 
@@ -25,7 +26,9 @@ const log = createLogger("map");
  */
 export async function connectToMAP({ server, scope, systemId, onMessage, credential }) {
   try {
-    const { AgentConnection } = await import("@multi-agent-protocol/sdk");
+    const mapSdk = await resolvePackage("@multi-agent-protocol/sdk");
+    if (!mapSdk) throw new Error("@multi-agent-protocol/sdk not available");
+    const { AgentConnection } = mapSdk;
 
     const teamName = scope.replace("swarm:", "");
     const agentName = `${teamName}-sidecar`;
@@ -91,7 +94,9 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
  */
 export async function fireAndForget(config, event) {
   try {
-    const { AgentConnection } = await import("@multi-agent-protocol/sdk");
+    const mapSdk = await resolvePackage("@multi-agent-protocol/sdk");
+    if (!mapSdk) throw new Error("@multi-agent-protocol/sdk not available");
+    const { AgentConnection } = mapSdk;
     const server = resolveMapServer(config);
     const scope = resolveScope(config);
     const teamName = resolveTeamName(config);
@@ -115,7 +120,9 @@ export async function fireAndForget(config, event) {
  */
 export async function fireAndForgetTrajectory(config, checkpoint) {
   try {
-    const { AgentConnection } = await import("@multi-agent-protocol/sdk");
+    const mapSdk = await resolvePackage("@multi-agent-protocol/sdk");
+    if (!mapSdk) throw new Error("@multi-agent-protocol/sdk not available");
+    const { AgentConnection } = mapSdk;
     const server = resolveMapServer(config);
     const scope = resolveScope(config);
     const teamName = resolveTeamName(config);

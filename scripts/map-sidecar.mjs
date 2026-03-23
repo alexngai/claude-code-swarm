@@ -26,7 +26,7 @@ import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
 import { readConfig } from "../src/config.mjs";
 import { createLogger, init as initLog } from "../src/log.mjs";
-import { configureNodePath } from "../src/swarmkit-resolver.mjs";
+import { configureNodePath, resolvePackage } from "../src/swarmkit-resolver.mjs";
 
 const log = createLogger("sidecar");
 
@@ -329,7 +329,9 @@ async function startLegacyAgentInbox(mapConnection) {
   if (!INBOX_CONFIG) return null;
 
   try {
-    const { createAgentInbox } = await import("agent-inbox");
+    const agentInboxMod = await resolvePackage("agent-inbox");
+    if (!agentInboxMod) throw new Error("agent-inbox not available");
+    const { createAgentInbox } = agentInboxMod;
 
     const peers = INBOX_CONFIG.federation?.peers || [];
     const federationConfig = peers.length > 0

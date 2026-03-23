@@ -120,8 +120,56 @@ export async function resolveSwarmkit() {
   }
 }
 
+/**
+ * Resolve an optional global package by name.
+ * Tries bare import first (works if in local dependencies), then falls back
+ * to absolute path via global node_modules (where swarmkit installs packages).
+ *
+ * ESM dynamic import() doesn't respect runtime NODE_PATH changes, so bare
+ * imports fail for packages only installed globally. This helper works around
+ * that by using absolute paths as a fallback.
+ *
+ * Results are cached in-memory. Returns the module or null. Never throws.
+ *
+ * @param {string} name - Package name (e.g. "agent-inbox", "sessionlog")
+ * @returns {Promise<object|null>}
+ */
+const _packageCache = new Map();
+
+export async function resolvePackage(name) {
+  if (_packageCache.has(name)) return _packageCache.get(name);
+
+  // 1. Try bare import (works for local dependencies)
+  try {
+    const mod = await import(/* @vite-ignore */ name);
+    _packageCache.set(name, mod);
+    return mod;
+  } catch {
+    // Not locally resolvable
+  }
+
+  // 2. Try global node_modules (where swarmkit installs)
+  const globalNm = getGlobalNodeModules();
+  if (globalNm) {
+    const globalPath = path.join(globalNm, name);
+    if (fs.existsSync(globalPath)) {
+      try {
+        const mod = await import(/* @vite-ignore */ globalPath);
+        _packageCache.set(name, mod);
+        return mod;
+      } catch {
+        // Global path exists but import failed
+      }
+    }
+  }
+
+  _packageCache.set(name, null);
+  return null;
+}
+
 /** Reset cached state (for testing) */
 export function _resetCache() {
   _globalPrefix = undefined;
   _swarmkit = undefined;
+  _packageCache.clear();
 }

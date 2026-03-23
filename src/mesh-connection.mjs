@@ -30,12 +30,15 @@
  * @returns {Promise<{peer: object, connection: object}|null>}
  */
 import { createLogger } from "./log.mjs";
+import { resolvePackage } from "./swarmkit-resolver.mjs";
 
 const log = createLogger("mesh");
 
 export async function createMeshPeer({ peerId, scope, systemId, onMessage, transport }) {
   try {
-    const { MeshPeer } = await import("agentic-mesh");
+    const agenticMesh = await resolvePackage("agentic-mesh");
+    if (!agenticMesh) throw new Error("agentic-mesh not available");
+    const { MeshPeer } = agenticMesh;
 
     const peer = MeshPeer.createEmbedded({ peerId, transport });
 
@@ -81,7 +84,9 @@ export async function createMeshPeer({ peerId, scope, systemId, onMessage, trans
  */
 export async function createMeshInbox({ meshPeer, scope, systemId, socketPath, inboxConfig }) {
   try {
-    const { createAgentInbox } = await import("agent-inbox");
+    const agentInboxMod = await resolvePackage("agent-inbox");
+    if (!agentInboxMod) throw new Error("agent-inbox not available");
+    const { createAgentInbox } = agentInboxMod;
 
     const peers = inboxConfig?.federation?.peers || [];
     const federationConfig = peers.length > 0
@@ -122,7 +127,9 @@ export async function createMeshInbox({ meshPeer, scope, systemId, socketPath, i
  */
 export async function meshFireAndForget(config, event) {
   try {
-    const { MeshPeer } = await import("agentic-mesh");
+    const agenticMeshMod = await resolvePackage("agentic-mesh");
+    if (!agenticMeshMod) throw new Error("agentic-mesh not available");
+    const { MeshPeer } = agenticMeshMod;
     const scope = config.map?.scope || "swarm:default";
     const teamName = scope.replace("swarm:", "");
 

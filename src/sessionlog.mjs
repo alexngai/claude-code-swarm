@@ -13,6 +13,7 @@ import { SESSIONLOG_DIR, SESSIONLOG_STATE_PATH, sessionPaths } from "./paths.mjs
 import { resolveTeamName, resolveScope } from "./config.mjs";
 import { sendToSidecar, ensureSidecar } from "./sidecar-client.mjs";
 import { fireAndForgetTrajectory } from "./map-connection.mjs";
+import { resolvePackage } from "./swarmkit-resolver.mjs";
 
 /**
  * Check if sessionlog is installed and active.
@@ -176,7 +177,9 @@ export async function annotateSwarmSession(config, sessionId) {
 
   let createSessionStore;
   try {
-    ({ createSessionStore } = await import("sessionlog"));
+    const sessionlogMod = await resolvePackage("sessionlog");
+    if (!sessionlogMod) return;
+    ({ createSessionStore } = sessionlogMod);
   } catch {
     // sessionlog not available as a module
     return;
