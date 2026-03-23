@@ -26,6 +26,11 @@
 
 import { readConfig, resolveTeamName } from "../src/config.mjs";
 import { createLogger, init as initLog } from "../src/log.mjs";
+import { configureNodePath } from "../src/swarmkit-resolver.mjs";
+
+// Configure NODE_PATH so dynamic imports of globally-installed packages
+// resolve correctly when hooks restart the sidecar or use fire-and-forget.
+configureNodePath();
 
 const log = createLogger("map-hook");
 import { readRoles, matchRole } from "../src/roles.mjs";

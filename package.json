@@ -18,19 +18,16 @@
     "swarm-generate-agents": "./scripts/generate-agents.mjs"
   },
   "dependencies": {
+    "@multi-agent-protocol/sdk": "^0.1.4",
     "agentic-mesh": "^0.2.0",
     "js-yaml": "^4.1.0"
   },
   "peerDependencies": {
-    "@multi-agent-protocol/sdk": "*",
     "agent-inbox": "*",
     "opentasks": "*",
     "swarmkit": "*"
   },
   "peerDependenciesMeta": {
-    "@multi-agent-protocol/sdk": {
-      "optional": true
-    },
     "agent-inbox": {
       "optional": true
     },

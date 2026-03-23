@@ -20,12 +20,13 @@
 
 import fs from "fs";
 import path from "path";
-import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths } from "../src/paths.mjs";
+import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths, pluginDir } from "../src/paths.mjs";
 import { connectToMAP } from "../src/map-connection.mjs";
 import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
 import { readConfig } from "../src/config.mjs";
 import { createLogger, init as initLog } from "../src/log.mjs";
+import { configureNodePath } from "../src/swarmkit-resolver.mjs";
 
 const log = createLogger("sidecar");
 
@@ -48,6 +49,11 @@ const RECONNECT_INTERVAL_MS = parseInt(getArg("reconnect-interval", ""), 10) || 
 
 // Auth credential for server-driven auth negotiation (opaque — type determined by server)
 const AUTH_CREDENTIAL = getArg("credential", "");
+
+// Configure NODE_PATH so dynamic imports of globally-installed packages
+// (@multi-agent-protocol/sdk, agent-inbox, agentic-mesh) resolve correctly.
+// Must happen before any dynamic import() calls.
+configureNodePath();
 
 // Initialize logger with config + session context (before any log calls)
 const _logConfig = readConfig().log;
@@ -400,7 +406,7 @@ async function main() {
   });
   socketServer = createSocketServer(sPaths.socketPath, (command, client) => {
     resetInactivityTimer();
-    commandHandler(command, client);
+    return commandHandler(command, client);
   });
 
   // Start inactivity timer
