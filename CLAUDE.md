@@ -461,6 +461,16 @@ Runtime:
 - **Claude Code agent teams** — enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings.json
 
 ## Development notes
+
+### Debugging with logs
+When logging is enabled, per-session log files (JSON Lines format) are written to:
+- **Default location**: `~/.claude-swarm/tmp/logs/<timestamp>_<sessionId>.log`
+- **Custom location**: set `log.dir` in config or `SWARM_LOG_DIR` env var
+- **Explicit file**: set `log.file` in config or `SWARM_LOG_FILE` env var
+
+To enable verbose logging: `SWARM_LOG_LEVEL=debug claude` (or `info` for lifecycle events only). The default level is `warn`. Each session may produce multiple log files (e.g., one from bootstrap, one from the sidecar) sharing the same session ID in the filename.
+
+### General notes
 - Templates are provided by the openteams package (installed via swarmkit), not bundled with the plugin
 - `.swarm/` directory is managed by swarmkit for ecosystem packages (openteams, sessionlog) via `initProjectPackage()`
 - Plugin-specific state lives under `.swarm/claude-swarm/` (config, `.gitignore` ignoring `tmp/`). Runtime artifacts go in `.swarm/claude-swarm/tmp/` (per-template caches, MAP files)
