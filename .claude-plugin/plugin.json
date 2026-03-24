@@ -12,9 +12,7 @@
         "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/mcp-launcher.mjs",
         "opentasks"
       ],
-      "env": {
-        "OPENTASKS_WORKING_DIR": "${workspaceFolder}"
-      }
+      "env": {}
     },
     "agent-inbox": {
       "command": "node",
@@ -30,9 +28,7 @@
         "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/mcp-launcher.mjs",
         "minimem"
       ],
-      "env": {
-        "MINIMEM_WORKING_DIR": "${workspaceFolder}"
-      }
+      "env": {}
     }
   }
 }
