@@ -2,9 +2,10 @@
 /**
  * dev-link.mjs — Link/unlink local plugin for development
  *
- * Replaces the installed plugin cache directory with a symlink to the local
- * repo. Claude Code resolves CLAUDE_PLUGIN_ROOT from the original cache path,
- * so we must symlink there (editing installed_plugins.json alone doesn't work).
+ * Two-pronged approach to survive Claude Code plugin updates:
+ * 1. Updates installPath in installed_plugins.json to point to the local repo
+ *    (so CLAUDE_PLUGIN_ROOT resolves directly — survives cache dir overwrites)
+ * 2. Replaces the cache directory with a symlink as a fallback
  *
  * Usage:
  *   npm run dev:link      — replace cache dir with symlink to local repo
@@ -81,45 +82,65 @@ function getCachePath() {
 
 function link() {
   const cachePath = getCachePath();
+  const { data, entry } = getPluginEntry();
 
+  // 1. Update installPath in installed_plugins.json to point to local repo
+  if (entry.installPath !== PLUGIN_ROOT) {
+    entry._originalInstallPath = entry.installPath;
+    entry.installPath = PLUGIN_ROOT;
+    fs.writeFileSync(INSTALLED_PLUGINS_PATH, JSON.stringify(data, null, 2) + "\n");
+    console.log(`Updated installPath: ${entry._originalInstallPath} → ${PLUGIN_ROOT}`);
+  } else {
+    console.log(`installPath already points to local repo`);
+  }
+
+  // 2. Create symlink at cache path as fallback (in case Claude Code still resolves from cache)
   if (isSymlink(cachePath)) {
     const target = fs.readlinkSync(cachePath);
     if (target === PLUGIN_ROOT) {
-      console.log(`Already linked: ${cachePath} → ${PLUGIN_ROOT}`);
-      return;
+      console.log(`Symlink already exists: ${cachePath} → ${PLUGIN_ROOT}`);
+    } else {
+      console.error(`Cache path symlinked to a different target: ${target}`);
+      process.exit(1);
     }
-    console.error(`Already symlinked to a different target: ${target}`);
-    process.exit(1);
+  } else {
+    if (fs.existsSync(cachePath)) {
+      fs.rmSync(cachePath, { recursive: true, force: true });
+      console.log(`Removed cached copy: ${cachePath}`);
+    }
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.symlinkSync(PLUGIN_ROOT, cachePath, "dir");
+    console.log(`Symlinked: ${cachePath} → ${PLUGIN_ROOT}`);
   }
 
-  // Remove the cached copy
-  if (fs.existsSync(cachePath)) {
-    fs.rmSync(cachePath, { recursive: true, force: true });
-    console.log(`Removed cached copy: ${cachePath}`);
-  }
-
-  // Ensure parent directory exists
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-
-  // Create symlink
-  fs.symlinkSync(PLUGIN_ROOT, cachePath, "dir");
-  console.log(`Linked: ${cachePath} → ${PLUGIN_ROOT}`);
   console.log("\nRestart Claude Code for changes to take effect.");
 }
 
 function unlink() {
-  const cachePath = getCachePath();
+  const { data, entry } = getPluginEntry();
+  const cachePath = entry._originalInstallPath || entry.installPath;
 
-  if (!isSymlink(cachePath)) {
+  // 1. Restore installPath in installed_plugins.json
+  if (entry._originalInstallPath) {
+    entry.installPath = entry._originalInstallPath;
+    delete entry._originalInstallPath;
+    fs.writeFileSync(INSTALLED_PLUGINS_PATH, JSON.stringify(data, null, 2) + "\n");
+    console.log(`Restored installPath: ${entry.installPath}`);
+  }
+
+  // 2. Remove symlink if present
+  if (isSymlink(cachePath)) {
+    fs.unlinkSync(cachePath);
+    console.log(`Removed symlink: ${cachePath}`);
+  } else if (entry.installPath === PLUGIN_ROOT) {
+    // installPath still points to local repo but no symlink — just restore path
+    console.log(`No symlink to remove at ${cachePath}`);
+  } else if (fs.existsSync(cachePath)) {
     console.log(`Not linked (${cachePath} is not a symlink)`);
     return;
   }
 
-  // Remove symlink
-  fs.unlinkSync(cachePath);
-  console.log(`Removed symlink: ${cachePath}`);
-
-  // Reinstall from marketplace clone
+  // 3. Reinstall from marketplace clone
   const marketplacePath = getMarketplacePath();
   const pluginDir = path.join(marketplacePath, ".claude-plugin");
 
@@ -129,10 +150,8 @@ function unlink() {
     process.exit(1);
   }
 
-  // Copy marketplace clone to cache
   fs.cpSync(marketplacePath, cachePath, { recursive: true });
 
-  // Install production deps
   try {
     execSync("npm install --production --ignore-scripts", {
       cwd: cachePath,
@@ -148,18 +167,35 @@ function unlink() {
 }
 
 function status() {
-  const cachePath = getCachePath();
+  const { entry } = getPluginEntry();
+  const cachePath = entry._originalInstallPath || entry.installPath;
+  const installPathLinked = entry.installPath === PLUGIN_ROOT;
+  const symlinkLinked = isSymlink(cachePath);
 
-  if (isSymlink(cachePath)) {
+  console.log(`installPath: ${entry.installPath}${installPathLinked ? " (dev-linked)" : ""}`);
+  if (entry._originalInstallPath) {
+    console.log(`  original: ${entry._originalInstallPath}`);
+  }
+
+  if (symlinkLinked) {
     const target = fs.readlinkSync(cachePath);
-    console.log(`LINKED: ${cachePath} → ${target}`);
+    console.log(`symlink: ${cachePath} → ${target}`);
   } else if (fs.existsSync(cachePath)) {
     const pkgPath = path.join(cachePath, "package.json");
     const version = fs.existsSync(pkgPath) ? readJson(pkgPath).version : "?";
-    console.log(`NOT LINKED: using cached copy at ${cachePath} (v${version})`);
+    console.log(`cache: ${cachePath} (v${version}, not symlinked)`);
   } else {
-    console.log(`MISSING: ${cachePath} does not exist`);
-    console.log(`  Run 'npm run dev:link' to create symlink.`);
+    console.log(`cache: ${cachePath} (missing)`);
+  }
+
+  if (installPathLinked && symlinkLinked) {
+    console.log("\nStatus: FULLY LINKED (installPath + symlink)");
+  } else if (installPathLinked) {
+    console.log("\nStatus: LINKED via installPath (symlink missing — may still work)");
+  } else if (symlinkLinked) {
+    console.log("\nStatus: LINKED via symlink only (installPath not updated)");
+  } else {
+    console.log("\nStatus: NOT LINKED");
   }
 }
 
