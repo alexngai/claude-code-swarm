@@ -45,9 +45,6 @@
     "test:e2e:tier4": "vitest run --config e2e/vitest.config.e2e.mjs -t tier4",
     "test:e2e:tier5": "vitest run --config e2e/vitest.config.e2e.mjs -t tier5",
     "test:e2e:tier7": "vitest run --config e2e/vitest.config.e2e.mjs -t tier7",
-    "dev:link": "node scripts/dev-link.mjs link",
-    "dev:unlink": "node scripts/dev-link.mjs unlink",
-    "dev:status": "node scripts/dev-link.mjs status",
     "version:patch": "npm version patch --no-git-tag-version && node scripts/sync-version.mjs",
     "version:minor": "npm version minor --no-git-tag-version && node scripts/sync-version.mjs",
     "version:major": "npm version major --no-git-tag-version && node scripts/sync-version.mjs"
