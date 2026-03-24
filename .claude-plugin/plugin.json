@@ -7,20 +7,20 @@
   },
   "mcpServers": {
     "opentasks": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/run-opentasks-mcp.sh",
-      "args": [],
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/.claude-plugin/mcp-launcher.mjs", "opentasks"],
       "env": {
         "OPENTASKS_WORKING_DIR": "${workspaceFolder}"
       }
     },
     "agent-inbox": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/run-agent-inbox-mcp.sh",
-      "args": [],
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/.claude-plugin/mcp-launcher.mjs", "agent-inbox"],
       "env": {}
     },
     "minimem": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/run-minimem-mcp.sh",
-      "args": [],
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/.claude-plugin/mcp-launcher.mjs", "minimem"],
       "env": {
         "MINIMEM_WORKING_DIR": "${workspaceFolder}"
       }
