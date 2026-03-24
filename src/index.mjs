@@ -80,6 +80,7 @@ export {
 // Sessionlog
 export {
   checkSessionlogStatus,
+  ensureSessionlogEnabled,
   findActiveSession,
   buildTrajectoryCheckpoint,
   syncSessionlog,

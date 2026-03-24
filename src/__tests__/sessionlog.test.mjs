@@ -1,8 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import path from "path";
 import fs from "fs";
-import { findActiveSession, buildTrajectoryCheckpoint } from "../sessionlog.mjs";
+import { execSync } from "child_process";
+import { findActiveSession, buildTrajectoryCheckpoint, ensureSessionlogEnabled, checkSessionlogStatus } from "../sessionlog.mjs";
 import { makeTmpDir, writeFile, makeConfig, cleanupTmpDir } from "./helpers.mjs";
+
+// Mock child_process for ensureSessionlogEnabled tests
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    execSync: vi.fn(actual.execSync),
+  };
+});
+
+// Mock swarmkit-resolver for resolvePackage
+vi.mock("../swarmkit-resolver.mjs", () => ({
+  resolvePackage: vi.fn().mockResolvedValue(null),
+}));
 
 describe("sessionlog", () => {
   let tmpDir;
@@ -134,6 +149,66 @@ describe("sessionlog", () => {
     it("sets sessionId from state.sessionID", () => {
       const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
       expect(cp.sessionId).toBe("sess-123");
+    });
+  });
+
+  describe("ensureSessionlogEnabled", () => {
+    beforeEach(() => {
+      vi.mocked(execSync).mockReset();
+    });
+
+    it("returns true immediately when sessionlog is already active", async () => {
+      // checkSessionlogStatus calls execSync twice: `which sessionlog` and `sessionlog status`
+      vi.mocked(execSync)
+        .mockImplementationOnce(() => "/usr/local/bin/sessionlog") // which
+        .mockImplementationOnce(() => "enabled: true\nstrategy: manual-commit"); // status
+      const result = await ensureSessionlogEnabled();
+      expect(result).toBe(true);
+    });
+
+    it("returns false when sessionlog is not installed", async () => {
+      vi.mocked(execSync).mockImplementationOnce(() => { throw new Error("not found"); }); // which
+      const result = await ensureSessionlogEnabled();
+      expect(result).toBe(false);
+    });
+
+    it("attempts CLI enable when installed but not enabled and resolvePackage returns null", async () => {
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      vi.mocked(resolvePackage).mockResolvedValue(null);
+
+      // First two calls: checkSessionlogStatus (which + status)
+      // Third call: CLI fallback `sessionlog enable --agent claude-code`
+      vi.mocked(execSync)
+        .mockImplementationOnce(() => "/usr/local/bin/sessionlog") // which
+        .mockImplementationOnce(() => "enabled: false") // status → not enabled
+        .mockImplementationOnce(() => ""); // sessionlog enable succeeds
+      const result = await ensureSessionlogEnabled();
+      expect(result).toBe(true);
+    });
+
+    it("returns false when both programmatic and CLI enable fail", async () => {
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      vi.mocked(resolvePackage).mockResolvedValue(null);
+
+      vi.mocked(execSync)
+        .mockImplementationOnce(() => "/usr/local/bin/sessionlog") // which
+        .mockImplementationOnce(() => "enabled: false") // status
+        .mockImplementationOnce(() => { throw new Error("enable failed"); }); // CLI fails
+      const result = await ensureSessionlogEnabled();
+      expect(result).toBe(false);
+    });
+
+    it("tries programmatic API before CLI fallback", async () => {
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      const mockEnable = vi.fn().mockResolvedValue({ enabled: true });
+      vi.mocked(resolvePackage).mockResolvedValue({ enable: mockEnable });
+
+      vi.mocked(execSync)
+        .mockImplementationOnce(() => "/usr/local/bin/sessionlog") // which
+        .mockImplementationOnce(() => "enabled: false"); // status → not enabled
+      const result = await ensureSessionlogEnabled();
+      expect(result).toBe(true);
+      expect(mockEnable).toHaveBeenCalledWith({ agent: "claude-code" });
     });
   });
 });

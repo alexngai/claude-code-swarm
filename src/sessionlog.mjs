@@ -41,6 +41,41 @@ export function checkSessionlogStatus() {
 }
 
 /**
+ * Auto-enable sessionlog if it is installed but not yet enabled.
+ * Tries the programmatic API first (dynamic import), then falls back to CLI.
+ * Best-effort — returns true if enabled, false otherwise. Never throws.
+ */
+export async function ensureSessionlogEnabled() {
+  const status = checkSessionlogStatus();
+  if (status === "active") return true;
+  if (status === "not installed") return false;
+
+  // Status is "installed but not enabled" — try to enable it
+
+  // 1. Try programmatic API via dynamic import
+  try {
+    const sessionlogMod = await resolvePackage("sessionlog");
+    if (sessionlogMod?.enable) {
+      const result = await sessionlogMod.enable({ agent: "claude-code" });
+      if (result.enabled) return true;
+    }
+  } catch {
+    // Fall through to CLI
+  }
+
+  // 2. Fallback to CLI
+  try {
+    execSync("sessionlog enable --agent claude-code", {
+      stdio: "ignore",
+      timeout: 15_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Find the active (non-ended) sessionlog session file.
  * Returns parsed SessionState or null.
  */

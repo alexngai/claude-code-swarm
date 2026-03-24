@@ -20,7 +20,7 @@ import { findSocketPath, isDaemonAlive, ensureDaemon } from "./opentasks-client.
 import { loadTeam } from "./template.mjs";
 import { killSidecar, startSidecar, sendToInbox } from "./sidecar-client.mjs";
 import { sendCommand } from "./map-events.mjs";
-import { checkSessionlogStatus, syncSessionlog, annotateSwarmSession } from "./sessionlog.mjs";
+import { checkSessionlogStatus, ensureSessionlogEnabled, syncSessionlog, annotateSwarmSession } from "./sessionlog.mjs";
 import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
 
 /**
@@ -330,7 +330,20 @@ export async function backgroundInit(config, scope, dir, sessionId) {
       );
     }
 
-    // Sessionlog sync + swarm annotation
+    // Sessionlog: auto-enable if configured but not yet active, then sync + annotate
+    if (config.sessionlog.enabled) {
+      tasks.push(
+        ensureSessionlogEnabled()
+          .then((enabled) => {
+            if (enabled) {
+              log.info("sessionlog enabled");
+            } else {
+              log.warn("sessionlog configured but could not be enabled");
+            }
+          })
+          .catch(() => {})
+      );
+    }
     if (config.map.enabled && config.sessionlog.sync !== "off") {
       tasks.push(syncSessionlog(config, sessionId).catch(() => {}));
     }
