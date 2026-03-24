@@ -19,6 +19,7 @@ const log = createLogger("bootstrap");
 import { findSocketPath, isDaemonAlive, ensureDaemon } from "./opentasks-client.mjs";
 import { loadTeam } from "./template.mjs";
 import { killSidecar, startSidecar, sendToInbox } from "./sidecar-client.mjs";
+import { sendCommand } from "./map-events.mjs";
 import { checkSessionlogStatus, syncSessionlog, annotateSwarmSession } from "./sessionlog.mjs";
 import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
 
@@ -243,6 +244,19 @@ async function startSessionSidecar(config, scope, dir, sessionId) {
 
   const ok = await startSidecar(config, dir, sessionId);
   if (ok) {
+    // Register the main Claude Code session agent with the MAP server
+    const teamName = resolveTeamName(config);
+    sendCommand(config, {
+      action: "spawn",
+      agent: {
+        agentId: sessionId,
+        name: `${teamName}-main`,
+        role: "orchestrator",
+        scopes: [scope],
+        metadata: { isMain: true, sessionId },
+      },
+    }, sessionId).catch(() => {});
+
     return `connected (scope: ${scope})`;
   }
   return `starting (scope: ${scope})`;

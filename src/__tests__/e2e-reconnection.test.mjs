@@ -102,7 +102,7 @@ describe("E2E: sidecar reconnection after MAP connection loss", () => {
     socketPath = path.join(tmpDir, "sidecar.sock");
     mockConn = createMockMapConnection();
     registeredAgents = new Map();
-    handler = createCommandHandler(mockConn, SCOPE, registeredAgents);
+    handler = createCommandHandler(mockConn, SCOPE, registeredAgents, { connWaitTimeoutMs: 500 });
     server = createSocketServer(socketPath, handler);
     await new Promise((resolve) => server.on("listening", resolve));
   });
@@ -191,7 +191,7 @@ describe("E2E: sidecar reconnection after MAP connection loss", () => {
       expect(mockConn.send).not.toHaveBeenCalled();
     });
 
-    it("spawn responds ok:false with error when connection is null", async () => {
+    it("spawn responds ok:false with error when connection is null (after wait timeout)", async () => {
       handler.setConnection(null);
 
       const resp = await sendSocketCommand(socketPath, {
@@ -206,10 +206,10 @@ describe("E2E: sidecar reconnection after MAP connection loss", () => {
       });
 
       expect(resp.ok).toBe(false);
-      expect(resp.error).toBe("no connection");
+      expect(resp.error).toContain("timed out waiting");
     });
 
-    it("trajectory-checkpoint responds ok:false when connection is null", async () => {
+    it("trajectory-checkpoint responds ok:false when connection is null (after wait timeout)", async () => {
       handler.setConnection(null);
 
       const resp = await sendSocketCommand(socketPath, {
@@ -218,7 +218,7 @@ describe("E2E: sidecar reconnection after MAP connection loss", () => {
       });
 
       expect(resp.ok).toBe(false);
-      expect(resp.error).toBe("no connection");
+      expect(resp.error).toContain("timed out waiting");
     });
 
     it("ping still works with null connection", async () => {

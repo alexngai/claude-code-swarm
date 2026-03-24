@@ -168,7 +168,7 @@ describe("sidecar-server", () => {
       });
 
       it("responds {ok: false} when no connection", async () => {
-        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents);
+        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents, { connWaitTimeoutMs: 0 });
         await nullHandler({
           action: "spawn",
           agent: { agentId: "a", name: "a", role: "r", scopes: [], metadata: {} },
@@ -240,7 +240,7 @@ describe("sidecar-server", () => {
       });
 
       it("responds {ok: false} when no connection", async () => {
-        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents);
+        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents, { connWaitTimeoutMs: 0 });
         await nullHandler({ action: "trajectory-checkpoint", checkpoint: {} }, mockClient);
         const written = JSON.parse(mockClient.write.mock.calls[0][0]);
         expect(written.ok).toBe(false);
@@ -264,7 +264,7 @@ describe("sidecar-server", () => {
       });
 
       it("responds {ok: true} even without connection", async () => {
-        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents);
+        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents, { connWaitTimeoutMs: 0 });
         await nullHandler({
           action: "bridge-task-created",
           task: { id: "t-1" },
@@ -360,7 +360,7 @@ describe("sidecar-server", () => {
       });
 
       it("responds {ok: true} without connection", async () => {
-        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents);
+        const nullHandler = createCommandHandler(null, "swarm:test", registeredAgents, { connWaitTimeoutMs: 0 });
         await nullHandler({
           action: "bridge-task-assigned",
           taskId: "t-1",

@@ -16,6 +16,10 @@ vi.mock("../sidecar-client.mjs", () => ({
   sendToInbox: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../map-events.mjs", () => ({
+  sendCommand: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../sessionlog.mjs", () => ({
   checkSessionlogStatus: vi.fn(() => "not installed"),
   syncSessionlog: vi.fn().mockResolvedValue(undefined),
@@ -81,6 +85,7 @@ vi.mock("../swarmkit-resolver.mjs", () => ({
 const { bootstrap, backgroundInit } = await import("../bootstrap.mjs");
 const { readConfig } = await import("../config.mjs");
 const { killSidecar, startSidecar } = await import("../sidecar-client.mjs");
+const { sendCommand } = await import("../map-events.mjs");
 const { checkSessionlogStatus, syncSessionlog, annotateSwarmSession } = await import("../sessionlog.mjs");
 const { pluginDir, ensureOpentasksDir, ensureSessionDir, listSessionDirs } = await import("../paths.mjs");
 const { findSocketPath, isDaemonAlive, ensureDaemon } = await import("../opentasks-client.mjs");
@@ -397,6 +402,47 @@ describe("bootstrap", () => {
           expect.anything(),
           "session-xyz"
         );
+      });
+
+      it("registers main agent via spawn command after sidecar starts", async () => {
+        startSidecar.mockResolvedValue(true);
+        const config = makeConfig({ mapEnabled: true, sidecar: "session" });
+        await backgroundInit(config, "swarm:test", pluginDir(), "session-main");
+        // Allow fire-and-forget promise to settle
+        await new Promise((r) => setTimeout(r, 50));
+        expect(sendCommand).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            action: "spawn",
+            agent: expect.objectContaining({
+              agentId: "session-main",
+              name: "test-team-main",
+              role: "orchestrator",
+              metadata: expect.objectContaining({ isMain: true, sessionId: "session-main" }),
+            }),
+          }),
+          "session-main"
+        );
+      });
+
+      it("uses sessionId as agentId for main agent", async () => {
+        startSidecar.mockResolvedValue(true);
+        const config = makeConfig({ mapEnabled: true, sidecar: "session" });
+        await backgroundInit(config, "swarm:test", pluginDir(), "abc-123-def");
+        await new Promise((r) => setTimeout(r, 50));
+        const spawnCall = sendCommand.mock.calls.find(
+          (c) => c[1]?.action === "spawn"
+        );
+        expect(spawnCall).toBeDefined();
+        expect(spawnCall[1].agent.agentId).toBe("abc-123-def");
+      });
+
+      it("does not register main agent when sidecar fails to start", async () => {
+        startSidecar.mockResolvedValue(false);
+        const config = makeConfig({ mapEnabled: true, sidecar: "session" });
+        await backgroundInit(config, "swarm:test", pluginDir(), "session-fail");
+        await new Promise((r) => setTimeout(r, 50));
+        expect(sendCommand).not.toHaveBeenCalled();
       });
     });
 

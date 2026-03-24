@@ -97,14 +97,35 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
   const { inboxInstance, meshPeer, transportMode = "websocket" } = opts;
   const useMeshRegistry = transportMode === "mesh" && inboxInstance;
 
+  // Connection-ready gate: commands that need `conn` await this promise.
+  // If connection is already available, resolves immediately.
+  // When connection arrives later (via setConnection), resolves the pending promise.
+  let _connReadyResolve;
+  let _connReady = conn
+    ? Promise.resolve(conn)
+    : new Promise((resolve) => { _connReadyResolve = resolve; });
+
+  const CONN_WAIT_TIMEOUT_MS = opts.connWaitTimeoutMs ?? 10_000;
+
+  /**
+   * Wait for the MAP connection to become available.
+   * Returns the connection or null if timed out.
+   */
+  async function waitForConn() {
+    if (conn) return conn;
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(null), CONN_WAIT_TIMEOUT_MS));
+    return Promise.race([_connReady, timeout]);
+  }
+
   const handler = async (command, client) => {
     const { action } = command;
 
     try {
       switch (action) {
         case "emit": {
-          if (conn) {
-            await conn.send(
+          const c = conn || await waitForConn();
+          if (c) {
+            await c.send(
               { scope },
               command.event,
               command.meta || { relationship: "broadcast" }
@@ -115,8 +136,9 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
         }
 
         case "send": {
-          if (conn) {
-            await conn.send(command.to, command.payload, command.meta);
+          const c = conn || await waitForConn();
+          if (c) {
+            await c.send(command.to, command.payload, command.meta);
           }
           respond(client, { ok: true });
           break;
@@ -160,10 +182,15 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
               log.error("spawn (mesh) failed", { error: err.message });
               respond(client, { ok: false, error: err.message });
             }
-          } else if (conn) {
-            // WebSocket mode: use MAP SDK
+          } else {
+            // WebSocket mode: use MAP SDK (wait for connection if needed)
+            const c = conn || await waitForConn();
+            if (!c) {
+              respond(client, { ok: false, error: "no connection (timed out waiting)" });
+              break;
+            }
             try {
-              const result = await conn.spawn({
+              const result = await c.spawn({
                 agentId,
                 name,
                 role,
@@ -191,8 +218,6 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
               log.error("spawn failed", { error: err.message });
               respond(client, { ok: false, error: err.message });
             }
-          } else {
-            respond(client, { ok: false, error: "no connection" });
           }
           break;
         }
@@ -229,7 +254,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
               }
             }
           } else if (conn) {
-            // WebSocket mode: use MAP SDK
+            // WebSocket mode: use MAP SDK (best-effort, no wait — local cleanup is priority)
             try {
               await conn.callExtension("map/agents/unregister", {
                 agentId,
@@ -263,15 +288,16 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
         }
 
         case "trajectory-checkpoint": {
-          if (conn) {
+          const c = conn || await waitForConn();
+          if (c) {
             try {
-              await conn.callExtension("trajectory/checkpoint", {
+              await c.callExtension("trajectory/checkpoint", {
                 checkpoint: command.checkpoint,
               });
               respond(client, { ok: true, method: "trajectory" });
             } catch (err) {
               log.warn("trajectory/checkpoint not supported, falling back to broadcast", { error: err.message });
-              await conn.send(
+              await c.send(
                 { scope },
                 {
                   type: "trajectory.checkpoint",
@@ -288,7 +314,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
               respond(client, { ok: true, method: "broadcast-fallback" });
             }
           } else {
-            respond(client, { ok: false, error: "no connection" });
+            respond(client, { ok: false, error: "no connection (timed out waiting)" });
           }
           break;
         }
@@ -299,9 +325,10 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
         // both mesh and websocket modes.
 
         case "bridge-task-created": {
-          if (conn) {
+          const c = conn || await waitForConn();
+          if (c) {
             try {
-              await conn.send({ scope }, {
+              await c.send({ scope }, {
                 type: "task.created",
                 task: command.task,
                 _origin: command.agentId || "opentasks",
@@ -313,9 +340,10 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
         }
 
         case "bridge-task-status": {
-          if (conn) {
+          const c = conn || await waitForConn();
+          if (c) {
             try {
-              await conn.send({ scope }, {
+              await c.send({ scope }, {
                 type: "task.status",
                 taskId: command.taskId,
                 previous: command.previous || "open",
@@ -324,7 +352,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
               }, { relationship: "broadcast" });
               // Also emit task.completed for terminal states
               if (command.current === "completed" || command.current === "closed") {
-                await conn.send({ scope }, {
+                await c.send({ scope }, {
                   type: "task.completed",
                   taskId: command.taskId,
                   _origin: command.agentId || "opentasks",
@@ -337,9 +365,10 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
         }
 
         case "bridge-task-assigned": {
-          if (conn) {
+          const c = conn || await waitForConn();
+          if (c) {
             try {
-              await conn.send({ scope }, {
+              await c.send({ scope }, {
                 type: "task.assigned",
                 taskId: command.taskId,
                 agentId: command.assignee,
@@ -352,7 +381,8 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
         }
 
         case "state": {
-          if (conn) {
+          const c = conn || await waitForConn();
+          if (c) {
             try {
               if (command.agentId) {
                 // State update for a specific child agent
@@ -379,9 +409,9 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
                 }
               } else {
                 // State update for the sidecar agent itself
-                await conn.updateState(command.state);
+                await c.updateState(command.state);
                 if (command.metadata) {
-                  await conn.updateMetadata(command.metadata);
+                  await c.updateMetadata(command.metadata);
                 }
               }
             } catch {
@@ -406,9 +436,17 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
     }
   };
 
-  // Allow updating the connection reference
+  // Allow updating the connection reference (also resolves any pending waitForConn)
   handler.setConnection = (newConn) => {
     conn = newConn;
+    if (newConn && _connReadyResolve) {
+      _connReadyResolve(newConn);
+      _connReadyResolve = null;
+    }
+    // Reset the gate for future disconnection/reconnection cycles
+    if (!newConn) {
+      _connReady = new Promise((resolve) => { _connReadyResolve = resolve; });
+    }
   };
 
   return handler;
