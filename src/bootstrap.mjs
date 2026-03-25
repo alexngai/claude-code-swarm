@@ -20,7 +20,7 @@ import { findSocketPath, isDaemonAlive, ensureDaemon } from "./opentasks-client.
 import { loadTeam } from "./template.mjs";
 import { killSidecar, startSidecar, sendToInbox } from "./sidecar-client.mjs";
 import { sendCommand } from "./map-events.mjs";
-import { checkSessionlogStatus, ensureSessionlogEnabled, syncSessionlog, annotateSwarmSession } from "./sessionlog.mjs";
+import { checkSessionlogStatus, ensureSessionlogEnabled, syncSessionlog, annotateSwarmSession, hasStandaloneHooks } from "./sessionlog.mjs";
 import { resolveSwarmkit, configureNodePath } from "./swarmkit-resolver.mjs";
 
 /**
@@ -330,20 +330,7 @@ export async function backgroundInit(config, scope, dir, sessionId) {
       );
     }
 
-    // Sessionlog: auto-enable if configured but not yet active, then sync + annotate
-    if (config.sessionlog.enabled) {
-      tasks.push(
-        ensureSessionlogEnabled()
-          .then((enabled) => {
-            if (enabled) {
-              log.info("sessionlog enabled");
-            } else {
-              log.warn("sessionlog configured but could not be enabled");
-            }
-          })
-          .catch(() => {})
-      );
-    }
+    // Sessionlog sync + swarm annotation (enable already happened in fast path)
     if (config.map.enabled && config.sessionlog.sync !== "off") {
       tasks.push(syncSessionlog(config, sessionId).catch(() => {}));
     }
@@ -407,10 +394,23 @@ export async function bootstrap(pluginDirOverride, sessionId) {
     }
   }
 
-  // 3. Sessionlog status — actual check is slow (execSync), defer to background
+  // 3. Sessionlog: ensure enabled, detect standalone vs plugin mode.
+  //    Mode is resolved per-hook in dispatchSessionlogHook() — bootstrap just
+  //    ensures sessionlog infrastructure exists and reports status.
   let sessionlogStatus = "not installed";
   if (config.sessionlog.enabled) {
-    sessionlogStatus = "checking";
+    try {
+      const mode = config.sessionlog.mode || "auto";
+      const standalone = mode === "standalone" || (mode === "auto" && hasStandaloneHooks());
+      if (standalone) {
+        sessionlogStatus = "active (standalone)";
+      } else {
+        const enabled = await ensureSessionlogEnabled();
+        sessionlogStatus = enabled ? "active" : "installed but not enabled";
+      }
+    } catch {
+      sessionlogStatus = "checking";
+    }
   }
 
   // 4. Quick MAP status — report "starting" for session sidecars (actual startup is background)

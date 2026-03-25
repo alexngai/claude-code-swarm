@@ -32,6 +32,7 @@ export function makeConfig(overrides = {}) {
     sessionlog: {
       enabled: overrides.sessionlogEnabled ?? false,
       sync: overrides.sessionlogSync ?? "off",
+      mode: overrides.sessionlogMode ?? "auto",
     },
     opentasks: {
       enabled: overrides.opentasksEnabled ?? false,

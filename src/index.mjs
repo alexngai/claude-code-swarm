@@ -81,10 +81,12 @@ export {
 export {
   checkSessionlogStatus,
   ensureSessionlogEnabled,
+  hasStandaloneHooks,
   findActiveSession,
   buildTrajectoryCheckpoint,
   syncSessionlog,
   annotateSwarmSession,
+  dispatchSessionlogHook,
 } from "./sessionlog.mjs";
 
 // Template

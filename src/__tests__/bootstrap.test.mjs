@@ -23,6 +23,7 @@ vi.mock("../map-events.mjs", () => ({
 vi.mock("../sessionlog.mjs", () => ({
   checkSessionlogStatus: vi.fn(() => "not installed"),
   ensureSessionlogEnabled: vi.fn().mockResolvedValue(false),
+  hasStandaloneHooks: vi.fn().mockReturnValue(false),
   syncSessionlog: vi.fn().mockResolvedValue(undefined),
   annotateSwarmSession: vi.fn().mockResolvedValue(undefined),
 }));
@@ -87,7 +88,7 @@ const { bootstrap, backgroundInit } = await import("../bootstrap.mjs");
 const { readConfig } = await import("../config.mjs");
 const { killSidecar, startSidecar } = await import("../sidecar-client.mjs");
 const { sendCommand } = await import("../map-events.mjs");
-const { checkSessionlogStatus, ensureSessionlogEnabled, syncSessionlog, annotateSwarmSession } = await import("../sessionlog.mjs");
+const { checkSessionlogStatus, ensureSessionlogEnabled, hasStandaloneHooks, syncSessionlog, annotateSwarmSession } = await import("../sessionlog.mjs");
 const { pluginDir, ensureOpentasksDir, ensureSessionDir, listSessionDirs } = await import("../paths.mjs");
 const { findSocketPath, isDaemonAlive, ensureDaemon } = await import("../opentasks-client.mjs");
 const { resolveSwarmkit, configureNodePath } = await import("../swarmkit-resolver.mjs");
@@ -162,16 +163,43 @@ describe("bootstrap", () => {
     });
 
     describe("sessionlog", () => {
-      it("returns 'checking' when sessionlog enabled (actual check is in background)", async () => {
+      it("defers to standalone when standalone hooks are present", async () => {
+        hasStandaloneHooks.mockReturnValue(true);
+        readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: true }));
+        const result = await bootstrap();
+        expect(result.sessionlogStatus).toBe("active (standalone)");
+        expect(ensureSessionlogEnabled).not.toHaveBeenCalled();
+      });
+
+      it("enables sessionlog when no standalone hooks", async () => {
+        hasStandaloneHooks.mockReturnValue(false);
+        ensureSessionlogEnabled.mockResolvedValue(true);
+        readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: true }));
+        const result = await bootstrap();
+        expect(result.sessionlogStatus).toBe("active");
+        expect(ensureSessionlogEnabled).toHaveBeenCalled();
+      });
+
+      it("reports status when enable fails", async () => {
+        hasStandaloneHooks.mockReturnValue(false);
+        ensureSessionlogEnabled.mockResolvedValue(false);
+        readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: true }));
+        const result = await bootstrap();
+        expect(result.sessionlogStatus).toBe("installed but not enabled");
+      });
+
+      it("returns 'checking' when hasStandaloneHooks throws", async () => {
+        hasStandaloneHooks.mockImplementation(() => { throw new Error("unexpected"); });
         readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: true }));
         const result = await bootstrap();
         expect(result.sessionlogStatus).toBe("checking");
       });
 
-      it("does not call checkSessionlogStatus synchronously", async () => {
-        readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: true }));
+      it("does not check standalone when disabled", async () => {
+        readConfig.mockReturnValue(makeConfig({ sessionlogEnabled: false }));
         await bootstrap();
-        expect(checkSessionlogStatus).not.toHaveBeenCalled();
+        expect(hasStandaloneHooks).not.toHaveBeenCalled();
+        expect(ensureSessionlogEnabled).not.toHaveBeenCalled();
       });
     });
 
@@ -478,27 +506,6 @@ describe("bootstrap", () => {
         const config = makeConfig({ sessionlogEnabled: false });
         await backgroundInit(config, "swarm:test", pluginDir(), "session-abc");
         expect(annotateSwarmSession).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("sessionlog auto-enable", () => {
-      it("calls ensureSessionlogEnabled when sessionlog is enabled", async () => {
-        const config = makeConfig({ sessionlogEnabled: true });
-        await backgroundInit(config, "swarm:test", pluginDir(), "session-abc");
-        expect(ensureSessionlogEnabled).toHaveBeenCalled();
-      });
-
-      it("does not call ensureSessionlogEnabled when sessionlog is disabled", async () => {
-        const config = makeConfig({ sessionlogEnabled: false });
-        await backgroundInit(config, "swarm:test", pluginDir(), "session-abc");
-        expect(ensureSessionlogEnabled).not.toHaveBeenCalled();
-      });
-
-      it("continues gracefully when ensureSessionlogEnabled fails", async () => {
-        ensureSessionlogEnabled.mockRejectedValue(new Error("enable failed"));
-        const config = makeConfig({ sessionlogEnabled: true });
-        // Should not throw
-        await backgroundInit(config, "swarm:test", pluginDir(), "session-abc");
       });
     });
 

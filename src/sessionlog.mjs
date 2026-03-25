@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 import { SESSIONLOG_DIR, SESSIONLOG_STATE_PATH, sessionPaths } from "./paths.mjs";
+import { readConfig } from "./config.mjs";
 import { resolveTeamName, resolveScope } from "./config.mjs";
 import { sendToSidecar, ensureSidecar } from "./sidecar-client.mjs";
 import { fireAndForgetTrajectory } from "./map-connection.mjs";
@@ -41,6 +42,24 @@ export function checkSessionlogStatus() {
 }
 
 /**
+ * Check if sessionlog's standalone hooks are installed in .claude/settings.json.
+ * Reads the file directly — no dependency on resolvePackage("sessionlog").
+ * Looks for any SessionStart hook command containing "sessionlog " as a sentinel
+ * (if session-start is there, all 12 hooks were installed together).
+ */
+export function hasStandaloneHooks() {
+  try {
+    const settingsPath = path.join(process.cwd(), ".claude", "settings.json");
+    const content = fs.readFileSync(settingsPath, "utf-8");
+    const settings = JSON.parse(content);
+    const hooks = settings.hooks?.SessionStart ?? [];
+    return hooks.some(m => m.hooks?.some(h => h.command?.includes("sessionlog ")));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Auto-enable sessionlog if it is installed but not yet enabled.
  * Tries the programmatic API first (dynamic import), then falls back to CLI.
  * Best-effort — returns true if enabled, false otherwise. Never throws.
@@ -53,10 +72,11 @@ export async function ensureSessionlogEnabled() {
   // Status is "installed but not enabled" — try to enable it
 
   // 1. Try programmatic API via dynamic import
+  //    skipAgentHooks: true — agent hooks are managed by cc-swarm's hooks.json
   try {
     const sessionlogMod = await resolvePackage("sessionlog");
     if (sessionlogMod?.enable) {
-      const result = await sessionlogMod.enable({ agent: "claude-code" });
+      const result = await sessionlogMod.enable({ agent: "claude-code", skipAgentHooks: true });
       if (result.enabled) return true;
     }
   } catch {
@@ -65,7 +85,7 @@ export async function ensureSessionlogEnabled() {
 
   // 2. Fallback to CLI
   try {
-    execSync("sessionlog enable --agent claude-code", {
+    execSync("sessionlog enable --agent claude-code --skip-agent-hooks", {
       stdio: "ignore",
       timeout: 15_000,
     });
@@ -237,4 +257,59 @@ export async function annotateSwarmSession(config, sessionId) {
   } catch {
     // Non-critical — session may not exist yet or annotate failed
   }
+}
+
+/**
+ * Dispatch a sessionlog hook event programmatically.
+ * Replaces the CLI pattern: `sessionlog hooks claude-code <hookName>`
+ * Uses resolvePackage("sessionlog") to call the lifecycle handler directly.
+ * Best-effort — never throws.
+ *
+ * @param {string} hookName - Sessionlog hook name (e.g. "session-start", "stop")
+ * @param {object} hookData - Raw hook event data from Claude Code stdin
+ */
+export async function dispatchSessionlogHook(hookName, hookData) {
+  // Decide whether plugin dispatch should handle this hook.
+  // config.sessionlog.mode: "plugin" (always dispatch), "standalone" (never dispatch), "auto" (check)
+  const config = readConfig();
+  const mode = config.sessionlog?.mode || "auto";
+  if (mode === "standalone") return;
+  if (mode === "auto" && hasStandaloneHooks()) return;
+
+  let sessionlogMod;
+  try {
+    sessionlogMod = await resolvePackage("sessionlog");
+  } catch {
+    return;
+  }
+  if (!sessionlogMod) return;
+
+  const {
+    isEnabled,
+    getAgent,
+    hasHookSupport,
+    createLifecycleHandler,
+    createSessionStore,
+    createCheckpointStore,
+  } = sessionlogMod;
+
+  // Bail if sessionlog is not enabled in this repo
+  try {
+    if (typeof isEnabled === "function" && !(await isEnabled())) return;
+  } catch {
+    return;
+  }
+
+  const agent = getAgent("claude-code");
+  if (!agent || (typeof hasHookSupport === "function" && !hasHookSupport(agent))) return;
+
+  const event = agent.parseHookEvent(hookName, JSON.stringify(hookData));
+  if (!event) return;
+
+  const handler = createLifecycleHandler({
+    sessionStore: createSessionStore(),
+    checkpointStore: createCheckpointStore(),
+  });
+
+  await handler.dispatch(agent, event);
 }

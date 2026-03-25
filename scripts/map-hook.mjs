@@ -19,6 +19,7 @@
  *   teammate-idle       — Update teammate state to idle
  *   task-completed      — Complete task in opentasks + emit bridge event
  *   opentasks-mcp-used  — Bridge opentasks MCP tool use → MAP task sync payload
+ *   sessionlog-dispatch — Dispatch a sessionlog lifecycle hook via programmatic API
  *
  * Usage: node map-hook.mjs <action>
  *        Hook event data is read from stdin (JSON).
@@ -48,7 +49,7 @@ import {
   handleNativeTaskCreatedEvent,
   handleNativeTaskUpdatedEvent,
 } from "../src/map-events.mjs";
-import { syncSessionlog } from "../src/sessionlog.mjs";
+import { syncSessionlog, dispatchSessionlogHook } from "../src/sessionlog.mjs";
 import { findSocketPath, pushSyncEvent } from "../src/opentasks-client.mjs";
 
 const action = process.argv[2];
@@ -184,6 +185,15 @@ async function handleNativeTaskUpdated(hookData, sessionId) {
   await handleNativeTaskUpdatedEvent(config, hookData, sessionId);
 }
 
+async function handleSessionlogDispatch(hookData) {
+  const sessionlogHookName = process.argv[3];
+  if (!sessionlogHookName) {
+    log.warn("sessionlog-dispatch: missing hook name argument");
+    return;
+  }
+  await dispatchSessionlogHook(sessionlogHookName, hookData);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -204,6 +214,7 @@ async function main() {
       case "opentasks-mcp-used": await handleOpentasksMcpUsed(hookData, sessionId); break;
       case "native-task-created": await handleNativeTaskCreated(hookData, sessionId); break;
       case "native-task-updated": await handleNativeTaskUpdated(hookData, sessionId); break;
+      case "sessionlog-dispatch": await handleSessionlogDispatch(hookData); break;
       default:
         log.warn("unknown action", { action });
     }

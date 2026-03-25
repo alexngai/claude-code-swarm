@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
-import { findActiveSession, buildTrajectoryCheckpoint, ensureSessionlogEnabled, checkSessionlogStatus } from "../sessionlog.mjs";
+import { findActiveSession, buildTrajectoryCheckpoint, ensureSessionlogEnabled, checkSessionlogStatus, dispatchSessionlogHook } from "../sessionlog.mjs";
 import { makeTmpDir, writeFile, makeConfig, cleanupTmpDir } from "./helpers.mjs";
 
 // Mock child_process for ensureSessionlogEnabled tests
@@ -18,6 +18,18 @@ vi.mock("child_process", async (importOriginal) => {
 vi.mock("../swarmkit-resolver.mjs", () => ({
   resolvePackage: vi.fn().mockResolvedValue(null),
 }));
+
+// Mock config — preserve resolveTeamName/resolveScope for buildTrajectoryCheckpoint tests,
+// override readConfig for dispatchSessionlogHook mode tests
+vi.mock("../config.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    readConfig: vi.fn(() => ({
+      sessionlog: { enabled: true, sync: "off", mode: "plugin" },
+    })),
+  };
+});
 
 describe("sessionlog", () => {
   let tmpDir;
@@ -208,7 +220,97 @@ describe("sessionlog", () => {
         .mockImplementationOnce(() => "enabled: false"); // status → not enabled
       const result = await ensureSessionlogEnabled();
       expect(result).toBe(true);
-      expect(mockEnable).toHaveBeenCalledWith({ agent: "claude-code" });
+      expect(mockEnable).toHaveBeenCalledWith({ agent: "claude-code", skipAgentHooks: true });
+    });
+  });
+
+  describe("dispatchSessionlogHook", () => {
+    function mockSessionlog(overrides = {}) {
+      return {
+        isEnabled: vi.fn().mockResolvedValue(true),
+        getAgent: vi.fn().mockReturnValue({ parseHookEvent: vi.fn().mockReturnValue({ type: "SessionStart" }) }),
+        hasHookSupport: vi.fn().mockReturnValue(true),
+        createLifecycleHandler: vi.fn().mockReturnValue({ dispatch: vi.fn() }),
+        createSessionStore: vi.fn().mockReturnValue({}),
+        createCheckpointStore: vi.fn().mockReturnValue({}),
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      vi.mocked(execSync).mockReset();
+    });
+
+    it("skips dispatch when mode is 'standalone'", async () => {
+      const { readConfig } = await import("../config.mjs");
+      vi.mocked(readConfig).mockReturnValue({ sessionlog: { enabled: true, sync: "off", mode: "standalone" } });
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      const mod = mockSessionlog();
+      vi.mocked(resolvePackage).mockResolvedValue(mod);
+      await dispatchSessionlogHook("session-start", { session_id: "s1" });
+      expect(mod.createLifecycleHandler().dispatch).not.toHaveBeenCalled();
+    });
+
+    it("dispatches when mode is 'plugin'", async () => {
+      const { readConfig } = await import("../config.mjs");
+      vi.mocked(readConfig).mockReturnValue({ sessionlog: { enabled: true, sync: "off", mode: "plugin" } });
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      const mockDispatch = vi.fn();
+      const mockEvent = { type: "SessionStart", sessionID: "s1" };
+      const mockAgent = { parseHookEvent: vi.fn().mockReturnValue(mockEvent) };
+      vi.mocked(resolvePackage).mockResolvedValue(mockSessionlog({
+        getAgent: vi.fn().mockReturnValue(mockAgent),
+        createLifecycleHandler: vi.fn().mockReturnValue({ dispatch: mockDispatch }),
+      }));
+      await dispatchSessionlogHook("session-start", { session_id: "s1" });
+      expect(mockDispatch).toHaveBeenCalledWith(mockAgent, mockEvent);
+    });
+
+    it("bails silently when sessionlog package is not available", async () => {
+      const { readConfig } = await import("../config.mjs");
+      vi.mocked(readConfig).mockReturnValue({ sessionlog: { enabled: true, sync: "off", mode: "plugin" } });
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      vi.mocked(resolvePackage).mockResolvedValue(null);
+      await dispatchSessionlogHook("session-start", { session_id: "s1" });
+    });
+
+    it("bails when isEnabled returns false", async () => {
+      const { readConfig } = await import("../config.mjs");
+      vi.mocked(readConfig).mockReturnValue({ sessionlog: { enabled: true, sync: "off", mode: "plugin" } });
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      const mockDispatch = vi.fn();
+      vi.mocked(resolvePackage).mockResolvedValue(mockSessionlog({
+        isEnabled: vi.fn().mockResolvedValue(false),
+        createLifecycleHandler: vi.fn().mockReturnValue({ dispatch: mockDispatch }),
+      }));
+      await dispatchSessionlogHook("session-start", { session_id: "s1" });
+      expect(mockDispatch).not.toHaveBeenCalled();
+    });
+
+    it("bails when parseHookEvent returns null", async () => {
+      const { readConfig } = await import("../config.mjs");
+      vi.mocked(readConfig).mockReturnValue({ sessionlog: { enabled: true, sync: "off", mode: "plugin" } });
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      const mockDispatch = vi.fn();
+      vi.mocked(resolvePackage).mockResolvedValue(mockSessionlog({
+        getAgent: vi.fn().mockReturnValue({ parseHookEvent: vi.fn().mockReturnValue(null) }),
+        createLifecycleHandler: vi.fn().mockReturnValue({ dispatch: mockDispatch }),
+      }));
+      await dispatchSessionlogHook("unknown-hook", {});
+      expect(mockDispatch).not.toHaveBeenCalled();
+    });
+
+    it("bails when getAgent returns null", async () => {
+      const { readConfig } = await import("../config.mjs");
+      vi.mocked(readConfig).mockReturnValue({ sessionlog: { enabled: true, sync: "off", mode: "plugin" } });
+      const { resolvePackage } = await import("../swarmkit-resolver.mjs");
+      const mockDispatch = vi.fn();
+      vi.mocked(resolvePackage).mockResolvedValue(mockSessionlog({
+        getAgent: vi.fn().mockReturnValue(null),
+        createLifecycleHandler: vi.fn().mockReturnValue({ dispatch: mockDispatch }),
+      }));
+      await dispatchSessionlogHook("session-start", { session_id: "s1" });
+      expect(mockDispatch).not.toHaveBeenCalled();
     });
   });
 });

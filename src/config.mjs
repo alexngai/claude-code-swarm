@@ -8,6 +8,7 @@
  */
 
 import fs from "fs";
+import path from "path";
 import { CONFIG_PATH, GLOBAL_CONFIG_PATH } from "./paths.mjs";
 
 export const DEFAULTS = {
@@ -53,8 +54,10 @@ function readJsonFile(filePath) {
  * Never throws — returns defaults on any error.
  */
 export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_CONFIG_PATH) {
-  const global = readJsonFile(globalConfigPath);
-  const project = readJsonFile(configPath);
+  // Resolve relative paths against process.cwd() — fs.readFileSync resolves
+  // against the OS working directory which may differ (e.g. worktrees, subdirs).
+  const global = readJsonFile(path.resolve(globalConfigPath));
+  const project = readJsonFile(path.resolve(configPath));
 
   // Project overrides global for each field (not deep merge — per-field fallthrough)
   const server = envStr("SWARM_MAP_SERVER") ?? project.map?.server ?? global.map?.server ?? undefined;
@@ -84,6 +87,7 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
     sessionlog: {
       enabled: envBool("SWARM_SESSIONLOG_ENABLED") ?? Boolean(project.sessionlog?.enabled ?? global.sessionlog?.enabled),
       sync: envStr("SWARM_SESSIONLOG_SYNC") ?? project.sessionlog?.sync ?? global.sessionlog?.sync ?? DEFAULTS.sessionlogSync,
+      mode: envStr("SWARM_SESSIONLOG_MODE") ?? project.sessionlog?.mode ?? global.sessionlog?.mode ?? "auto",
     },
     opentasks: {
       enabled: envBool("SWARM_OPENTASKS_ENABLED") ?? Boolean(project.opentasks?.enabled ?? global.opentasks?.enabled),
