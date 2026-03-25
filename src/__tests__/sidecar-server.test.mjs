@@ -229,13 +229,13 @@ describe("sidecar-server", () => {
 
       it("falls back to broadcast with trajectory.checkpoint payload when callExtension throws", async () => {
         mockConnection.callExtension.mockRejectedValueOnce(new Error("not supported"));
-        const cp = { id: "cp1", agentId: "a", sessionId: "s", label: "l", metadata: { phase: "active" } };
+        const cp = { id: "cp1", agent: "a", session_id: "s", files_touched: [], token_usage: null, metadata: { phase: "active" } };
         await handler({ action: "trajectory-checkpoint", checkpoint: cp }, mockClient);
         expect(mockConnection.send).toHaveBeenCalled();
         const [, payload] = mockConnection.send.mock.calls[0];
         expect(payload.type).toBe("trajectory.checkpoint");
         expect(payload.checkpoint.id).toBe("cp1");
-        expect(payload.checkpoint.agentId).toBe("a");
+        expect(payload.checkpoint.agent).toBe("a");
         expect(payload.checkpoint.metadata).toEqual({ phase: "active" });
       });
 

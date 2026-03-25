@@ -94,6 +94,7 @@ export function createSocketServer(socketPath, onCommand) {
 export function createCommandHandler(connection, scope, registeredAgents, opts = {}) {
   // Use a getter pattern so the connection ref can be updated
   let conn = connection;
+  let _trajectoryResourceId = null; // Cached resource_id from server response
   const { inboxInstance, meshPeer, transportMode = "websocket" } = opts;
   const useMeshRegistry = transportMode === "mesh" && inboxInstance;
 
@@ -291,10 +292,17 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
           const c = conn || await waitForConn();
           if (c) {
             try {
-              await c.callExtension("trajectory/checkpoint", {
-                checkpoint: command.checkpoint,
-              });
-              respond(client, { ok: true, method: "trajectory" });
+              // Include cached resource_id if available from a previous response
+              const payload = { checkpoint: command.checkpoint };
+              if (_trajectoryResourceId) {
+                payload.resource_id = _trajectoryResourceId;
+              }
+              const result = await c.callExtension("trajectory/checkpoint", payload);
+              // Cache resource_id from server response for subsequent calls
+              if (result?.resource_id) {
+                _trajectoryResourceId = result.resource_id;
+              }
+              respond(client, { ok: true, method: "trajectory", resource_id: result?.resource_id });
             } catch (err) {
               log.warn("trajectory/checkpoint not supported, falling back to broadcast", { error: err.message });
               await c.send(
@@ -303,9 +311,10 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
                   type: "trajectory.checkpoint",
                   checkpoint: {
                     id: command.checkpoint.id,
-                    agentId: command.checkpoint.agentId,
-                    sessionId: command.checkpoint.sessionId,
-                    label: command.checkpoint.label,
+                    agent: command.checkpoint.agent,
+                    session_id: command.checkpoint.session_id,
+                    files_touched: command.checkpoint.files_touched,
+                    token_usage: command.checkpoint.token_usage,
                     metadata: command.checkpoint.metadata,
                   },
                 },
