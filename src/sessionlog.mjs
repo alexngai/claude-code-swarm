@@ -310,9 +310,13 @@ export async function dispatchSessionlogHook(hookName, hookData) {
     createCheckpointStore,
   } = sessionlogMod;
 
+  // Pass cwd explicitly — sessionlog's defaults use git rev-parse which
+  // resolves against the OS working directory, not process.cwd().
+  const cwd = process.cwd();
+
   // Bail if sessionlog is not enabled in this repo
   try {
-    if (typeof isEnabled === "function" && !(await isEnabled())) return;
+    if (typeof isEnabled === "function" && !(await isEnabled(cwd))) return;
   } catch {
     return;
   }
@@ -324,8 +328,9 @@ export async function dispatchSessionlogHook(hookName, hookData) {
   if (!event) return;
 
   const handler = createLifecycleHandler({
-    sessionStore: createSessionStore(),
-    checkpointStore: createCheckpointStore(),
+    sessionStore: createSessionStore(cwd),
+    checkpointStore: createCheckpointStore(cwd),
+    cwd,
   });
 
   await handler.dispatch(agent, event);
