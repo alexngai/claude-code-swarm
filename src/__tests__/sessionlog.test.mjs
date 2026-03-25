@@ -99,13 +99,18 @@ describe("sessionlog", () => {
       filesTouched: ["a.js", "b.js"],
       lastCheckpointID: "cp-42",
       turnCheckpointIDs: ["cp-40", "cp-41", "cp-42"],
-      tokenUsage: { input: 1000, output: 500 },
+      tokenUsage: { inputTokens: 1000, outputTokens: 500, cacheCreationTokens: 50, cacheReadTokens: 200, apiCallCount: 3 },
       extraField: "extra",
     };
 
-    it("sets agentId to teamName-sidecar", () => {
+    it("sets agent to teamName-sidecar (wire format)", () => {
       const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
-      expect(cp.agentId).toBe("test-team-sidecar");
+      expect(cp.agent).toBe("test-team-sidecar");
+    });
+
+    it("sets session_id from state.sessionID (wire format)", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
+      expect(cp.session_id).toBe("sess-123");
     });
 
     it("builds checkpoint id from lastCheckpointID when available", () => {
@@ -119,10 +124,17 @@ describe("sessionlog", () => {
       expect(cp.id).toBe("sess-123-step10");
     });
 
-    it("builds human-readable label", () => {
+    it("builds human-readable label in metadata", () => {
       const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
-      expect(cp.label).toContain("Turn turn-5");
-      expect(cp.label).toContain("step 10");
+      expect(cp.metadata.label).toContain("Turn turn-5");
+      expect(cp.metadata.label).toContain("step 10");
+    });
+
+    it("defaults files_touched and checkpoints_count at lifecycle level", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
+      expect(cp.files_touched).toEqual([]);
+      expect(cp.checkpoints_count).toBe(0);
+      expect(cp.token_usage).toBeUndefined();
     });
 
     it("includes base metadata at lifecycle level", () => {
@@ -133,15 +145,27 @@ describe("sessionlog", () => {
       expect(cp.metadata.stepCount).toBeUndefined();
     });
 
-    it("includes metrics at metrics level", () => {
+    it("promotes files_touched and token_usage to top level at metrics level", () => {
       const cp = buildTrajectoryCheckpoint(baseState, "metrics", makeConfig());
-      expect(cp.metadata.stepCount).toBe(10);
-      expect(cp.metadata.filesTouched).toEqual(["a.js", "b.js"]);
-      expect(cp.metadata.tokenUsage).toEqual({ input: 1000, output: 500 });
-      expect(cp.metadata.lastCheckpointID).toBe("cp-42");
+      expect(cp.files_touched).toEqual(["a.js", "b.js"]);
+      expect(cp.checkpoints_count).toBe(3);
+      expect(cp.token_usage).toEqual({
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_creation_tokens: 50,
+        cache_read_tokens: 200,
+        api_call_count: 3,
+      });
     });
 
-    it("includes all state fields at full level", () => {
+    it("keeps stepCount and checkpoint IDs in metadata at metrics level", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "metrics", makeConfig());
+      expect(cp.metadata.stepCount).toBe(10);
+      expect(cp.metadata.lastCheckpointID).toBe("cp-42");
+      expect(cp.metadata.turnCheckpointIDs).toEqual(["cp-40", "cp-41", "cp-42"]);
+    });
+
+    it("includes all state fields in metadata at full level", () => {
       const cp = buildTrajectoryCheckpoint(baseState, "full", makeConfig());
       expect(cp.metadata.extraField).toBe("extra");
       expect(cp.metadata.stepCount).toBe(10);
@@ -158,9 +182,11 @@ describe("sessionlog", () => {
       expect(cp.metadata.endedAt).toBe("2024-01-01T01:00:00Z");
     });
 
-    it("sets sessionId from state.sessionID", () => {
-      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
-      expect(cp.sessionId).toBe("sess-123");
+    it("handles legacy tokenUsage format (input/output instead of inputTokens/outputTokens)", () => {
+      const state = { ...baseState, tokenUsage: { input: 800, output: 400 } };
+      const cp = buildTrajectoryCheckpoint(state, "metrics", makeConfig());
+      expect(cp.token_usage.input_tokens).toBe(800);
+      expect(cp.token_usage.output_tokens).toBe(400);
     });
   });
 

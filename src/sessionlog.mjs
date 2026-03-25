@@ -134,31 +134,54 @@ export function findActiveSession(sessionlogDir = SESSIONLOG_DIR) {
 
 /**
  * Build a MAP TrajectoryCheckpoint from sessionlog state.
- * Metadata contents are filtered by sync level.
+ *
+ * Conforms to sessionlog's SessionSyncCheckpoint wire format (snake_case,
+ * top-level fields) so OpenHive's sync listener can extract fields correctly.
+ * Extra sessionlog-specific fields go in `metadata` for passthrough.
  */
 export function buildTrajectoryCheckpoint(state, syncLevel, config) {
   const teamName = resolveTeamName(config);
-  const agentId = `${teamName}-sidecar`;
 
   const id =
     state.lastCheckpointID ||
     `${state.sessionID}-step${state.stepCount || 0}`;
 
-  const label = `Turn ${state.turnID || "?"} (step ${state.stepCount || 0}, ${state.phase || "unknown"})`;
+  // Wire format fields (top-level, snake_case) — always present
+  const checkpoint = {
+    id,
+    session_id: state.sessionID,
+    agent: `${teamName}-sidecar`,
+    files_touched: [],
+    checkpoints_count: 0,
+  };
 
+  // Metadata — sessionlog-specific fields for passthrough
   const metadata = {
     phase: state.phase,
     turnId: state.turnID,
     startedAt: state.startedAt,
+    label: `Turn ${state.turnID || "?"} (step ${state.stepCount || 0}, ${state.phase || "unknown"})`,
   };
   if (state.endedAt) metadata.endedAt = state.endedAt;
 
   if (syncLevel === "metrics" || syncLevel === "full") {
+    // Promote to top-level wire format fields
+    checkpoint.files_touched = state.filesTouched || [];
+    checkpoint.checkpoints_count = (state.turnCheckpointIDs || []).length;
+    if (state.tokenUsage) {
+      checkpoint.token_usage = {
+        input_tokens: state.tokenUsage.inputTokens ?? state.tokenUsage.input ?? 0,
+        output_tokens: state.tokenUsage.outputTokens ?? state.tokenUsage.output ?? 0,
+        cache_creation_tokens: state.tokenUsage.cacheCreationTokens ?? 0,
+        cache_read_tokens: state.tokenUsage.cacheReadTokens ?? 0,
+        api_call_count: state.tokenUsage.apiCallCount ?? 0,
+      };
+    }
+
+    // Keep in metadata for sessionlog consumers
     metadata.stepCount = state.stepCount;
-    metadata.filesTouched = state.filesTouched;
     metadata.lastCheckpointID = state.lastCheckpointID;
     metadata.turnCheckpointIDs = state.turnCheckpointIDs;
-    if (state.tokenUsage) metadata.tokenUsage = state.tokenUsage;
   }
 
   if (syncLevel === "full") {
@@ -169,13 +192,7 @@ export function buildTrajectoryCheckpoint(state, syncLevel, config) {
     }
   }
 
-  return {
-    id,
-    agentId,
-    sessionId: state.sessionID,
-    label,
-    metadata,
-  };
+  return { ...checkpoint, metadata };
 }
 
 /**
