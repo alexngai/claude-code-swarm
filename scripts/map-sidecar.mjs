@@ -51,6 +51,24 @@ const RECONNECT_INTERVAL_MS = parseInt(getArg("reconnect-interval", ""), 10) || 
 // Auth credential for server-driven auth negotiation (opaque — type determined by server)
 const AUTH_CREDENTIAL = getArg("credential", "");
 
+// Project context for swarm identification (sent as agent metadata)
+import { execSync } from "child_process";
+function getProjectContext() {
+  const context = {};
+  try { context.project = path.basename(process.cwd()); } catch {}
+  try {
+    context.branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {}
+  try {
+    const config = readConfig();
+    if (config.template) context.template = config.template;
+  } catch {}
+  return context;
+}
+const PROJECT_CONTEXT = getProjectContext();
+
 // Configure NODE_PATH so dynamic imports of globally-installed packages
 // (@multi-agent-protocol/sdk, agent-inbox, agentic-mesh) resolve correctly.
 // Must happen before any dynamic import() calls.
@@ -187,6 +205,7 @@ function startSlowReconnectLoop() {
         scope: MAP_SCOPE,
         systemId: SYSTEM_ID,
         credential: AUTH_CREDENTIAL || undefined,
+        projectContext: PROJECT_CONTEXT,
         onMessage: () => resetInactivityTimer(),
       });
 
@@ -359,6 +378,7 @@ async function startWebSocketTransport() {
     scope: MAP_SCOPE,
     systemId: SYSTEM_ID,
     credential: AUTH_CREDENTIAL || undefined,
+    projectContext: PROJECT_CONTEXT,
     onMessage: () => {
       resetInactivityTimer();
     },

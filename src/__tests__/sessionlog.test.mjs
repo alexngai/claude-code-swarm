@@ -188,6 +188,46 @@ describe("sessionlog", () => {
       expect(cp.token_usage.input_tokens).toBe(800);
       expect(cp.token_usage.output_tokens).toBe(400);
     });
+
+    it("includes project name from cwd in metadata", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
+      expect(cp.metadata.project).toBeDefined();
+      expect(typeof cp.metadata.project).toBe("string");
+      expect(cp.metadata.project.length).toBeGreaterThan(0);
+    });
+
+    it("includes git branch as top-level wire format field", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
+      // branch may be null in CI/non-git environments, but should be defined
+      expect("branch" in cp).toBe(true);
+    });
+
+    it("includes firstPrompt from session state when available", () => {
+      const state = { ...baseState, firstPrompt: "fix the bug in server.ts" };
+      const cp = buildTrajectoryCheckpoint(state, "lifecycle", makeConfig());
+      expect(cp.metadata.firstPrompt).toBe("fix the bug in server.ts");
+    });
+
+    it("truncates long firstPrompt to 200 chars", () => {
+      const state = { ...baseState, firstPrompt: "x".repeat(300) };
+      const cp = buildTrajectoryCheckpoint(state, "lifecycle", makeConfig());
+      expect(cp.metadata.firstPrompt.length).toBe(200);
+    });
+
+    it("omits firstPrompt when not in session state", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig());
+      expect(cp.metadata.firstPrompt).toBeUndefined();
+    });
+
+    it("includes template from config when configured", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig({ template: "gsd" }));
+      expect(cp.metadata.template).toBe("gsd");
+    });
+
+    it("omits template when not configured", () => {
+      const cp = buildTrajectoryCheckpoint(baseState, "lifecycle", makeConfig({ template: "" }));
+      expect(cp.metadata.template).toBeUndefined();
+    });
   });
 
   describe("ensureSessionlogEnabled", () => {

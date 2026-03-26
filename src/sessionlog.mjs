@@ -17,6 +17,20 @@ import { fireAndForgetTrajectory } from "./map-connection.mjs";
 import { resolvePackage } from "./swarmkit-resolver.mjs";
 
 /**
+ * Get the current git branch name. Returns null if not in a git repo.
+ */
+function getGitBranch() {
+  try {
+    return execSync("git rev-parse --abbrev-ref HEAD", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check if sessionlog is installed and active.
  * Returns 'active', 'installed but not enabled', or 'not installed'.
  */
@@ -151,6 +165,7 @@ export function buildTrajectoryCheckpoint(state, syncLevel, config) {
     id,
     session_id: state.sessionID,
     agent: `${teamName}-sidecar`,
+    branch: getGitBranch(),
     files_touched: [],
     checkpoints_count: 0,
   };
@@ -161,6 +176,10 @@ export function buildTrajectoryCheckpoint(state, syncLevel, config) {
     turnId: state.turnID,
     startedAt: state.startedAt,
     label: `Turn ${state.turnID || "?"} (step ${state.stepCount || 0}, ${state.phase || "unknown"})`,
+    // Project context for display
+    project: path.basename(process.cwd()),
+    firstPrompt: state.firstPrompt ? state.firstPrompt.slice(0, 200) : undefined,
+    template: config.template || undefined,
   };
   if (state.endedAt) metadata.endedAt = state.endedAt;
 

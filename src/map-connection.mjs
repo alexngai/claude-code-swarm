@@ -24,7 +24,7 @@ const log = createLogger("map");
  *   authRequired challenge with the server's preferred method + this credential.
  *   When absent, uses the standard SDK connect() for open mode servers.
  */
-export async function connectToMAP({ server, scope, systemId, onMessage, credential }) {
+export async function connectToMAP({ server, scope, systemId, onMessage, credential, projectContext }) {
   try {
     const mapSdk = await resolvePackage("@multi-agent-protocol/sdk");
     if (!mapSdk) throw new Error("@multi-agent-protocol/sdk not available");
@@ -44,6 +44,7 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
       metadata: {
         systemId,
         type: "claude-code-swarm-sidecar",
+        ...(projectContext || {}),
       },
       reconnection: {
         enabled: true,
