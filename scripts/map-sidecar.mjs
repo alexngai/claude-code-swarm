@@ -24,6 +24,7 @@ import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths, pluginDir } fro
 import { connectToMAP } from "../src/map-connection.mjs";
 import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
+import { createContentProvider } from "../src/content-provider.mjs";
 import { readConfig } from "../src/config.mjs";
 import { createLogger, init as initLog } from "../src/log.mjs";
 import { configureNodePath, resolvePackage } from "../src/swarmkit-resolver.mjs";
@@ -303,6 +304,55 @@ async function tryMeshTransport() {
 /**
  * Start with direct MAP SDK WebSocket transport (fallback).
  */
+/**
+ * Register the trajectory/content.request notification handler on a connection.
+ * When the hub sends a content request, the sidecar reads the transcript
+ * from sessionlog and responds with a trajectory/content.response notification.
+ */
+function registerContentHandler(conn) {
+  if (!conn || typeof conn.onNotification !== "function") return;
+
+  const contentProvider = createContentProvider();
+
+  conn.onNotification("trajectory/content.request", async (params) => {
+    const requestId = params?.request_id;
+    const checkpointId = params?.checkpoint_id;
+    if (!requestId) return;
+
+    log.info("content request received", { requestId, checkpointId });
+    resetInactivityTimer();
+
+    try {
+      const content = checkpointId ? await contentProvider(checkpointId) : null;
+
+      if (content) {
+        conn.sendNotification("trajectory/content.response", {
+          request_id: requestId,
+          transcript: content.transcript,
+          metadata: content.metadata,
+          prompts: content.prompts,
+          context: content.context,
+        });
+        log.info("content response sent", { requestId, size: content.transcript.length });
+      } else {
+        conn.sendNotification("trajectory/content.response", {
+          request_id: requestId,
+          error: "Content not found",
+        });
+        log.warn("content not found", { requestId, checkpointId });
+      }
+    } catch (err) {
+      log.error("content provider error", { requestId, error: err.message });
+      try {
+        conn.sendNotification("trajectory/content.response", {
+          request_id: requestId,
+          error: err.message,
+        });
+      } catch { /* ignore */ }
+    }
+  });
+}
+
 async function startWebSocketTransport() {
   connection = await connectToMAP({
     server: MAP_SERVER,
@@ -315,6 +365,11 @@ async function startWebSocketTransport() {
   });
 
   transportMode = "websocket";
+
+  // Register trajectory content handler for on-demand transcript serving
+  if (connection) {
+    registerContentHandler(connection);
+  }
 
   // Start agent-inbox with MAP connection (legacy mode)
   if (INBOX_CONFIG && connection) {

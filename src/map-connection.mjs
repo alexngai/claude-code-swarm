@@ -38,7 +38,7 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
       role: "sidecar",
       scopes: [scope],
       capabilities: {
-        trajectory: { canReport: true },
+        trajectory: { canReport: true, canServeContent: true },
         tasks: { canCreate: true, canAssign: true, canUpdate: true, canList: true },
       },
       metadata: {
