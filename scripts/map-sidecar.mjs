@@ -64,6 +64,20 @@ function getProjectContext() {
   try {
     const config = readConfig();
     if (config.template) context.template = config.template;
+
+    // Include task_graph metadata when opentasks is enabled
+    if (config.opentasks?.enabled) {
+      try {
+        const opentasksDir = path.resolve(".opentasks");
+        const configPath = path.join(opentasksDir, "config.json");
+        const taskGraph = { path: opentasksDir };
+        if (fs.existsSync(configPath)) {
+          const otConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+          if (otConfig.location?.hash) taskGraph.location_hash = otConfig.location.hash;
+        }
+        context.task_graph = taskGraph;
+      } catch { /* opentasks config not available */ }
+    }
   } catch {}
   return context;
 }
