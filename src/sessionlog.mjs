@@ -176,8 +176,9 @@ export function buildTrajectoryCheckpoint(state, syncLevel, config) {
     turnId: state.turnID,
     startedAt: state.startedAt,
     label: `Turn ${state.turnID || "?"} (step ${state.stepCount || 0}, ${state.phase || "unknown"})`,
-    // Project context for display
+    // Project context for display + auto-import
     project: path.basename(process.cwd()),
+    projectPath: process.cwd(),
     firstPrompt: state.firstPrompt ? state.firstPrompt.slice(0, 200) : undefined,
     template: config.template || undefined,
   };
