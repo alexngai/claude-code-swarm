@@ -523,8 +523,6 @@ async function main() {
   if (sidecarConfig.minimem?.enabled) {
     const minimemDir = sidecarConfig.minimem?.dir || ".swarm/minimem";
     const memWatcher = startMemoryWatcher(minimemDir, (_event) => {
-      // Send bridge-memory-sync through the command handler
-      // This reuses the same callExtension path as the PostToolUse hook
       const fakeClient = {
         write: () => {},
         writable: true,
@@ -533,6 +531,7 @@ async function main() {
         action: "bridge-memory-sync",
         agentId: SESSION_ID || "minimem",
         timestamp: new Date().toISOString(),
+        memoryDir: minimemDir,
       }, fakeClient);
     });
 

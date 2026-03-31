@@ -396,13 +396,13 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
           const c = conn || await waitForConn();
           if (c) {
             try {
-              // Use callExtension for JSON-RPC vendor-prefixed method
-              // Same pattern as trajectory/checkpoint
               const params = {
                 resource_id: _memoryResourceId || "",
                 agent_id: command.agentId || "minimem",
                 commit_hash: `memory-${Date.now()}`,
                 timestamp: command.timestamp || new Date().toISOString(),
+                // Include the memory directory path for resource resolution on first call
+                path: command.memoryDir || "",
               };
               const result = await c.callExtension("x-openhive/memory.sync", params);
               // Cache resource_id from server response
