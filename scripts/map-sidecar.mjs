@@ -25,6 +25,7 @@ import { connectToMAP } from "../src/map-connection.mjs";
 import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
 import { createContentProvider } from "../src/content-provider.mjs";
+import { startMemoryWatcher } from "../src/memory-watcher.mjs";
 import { readConfig } from "../src/config.mjs";
 import { createLogger, init as initLog } from "../src/log.mjs";
 import { configureNodePath, resolvePackage } from "../src/swarmkit-resolver.mjs";
@@ -516,6 +517,31 @@ async function main() {
     resetInactivityTimer();
     return commandHandler(command, client);
   });
+
+  // Start memory file watcher if minimem is enabled
+  const sidecarConfig = readConfig();
+  if (sidecarConfig.minimem?.enabled) {
+    const minimemDir = sidecarConfig.minimem?.dir || ".swarm/minimem";
+    const memWatcher = startMemoryWatcher(minimemDir, (_event) => {
+      // Send bridge-memory-sync through the command handler
+      // This reuses the same callExtension path as the PostToolUse hook
+      const fakeClient = {
+        write: () => {},
+        writable: true,
+      };
+      commandHandler({
+        action: "bridge-memory-sync",
+        agentId: SESSION_ID || "minimem",
+        timestamp: new Date().toISOString(),
+      }, fakeClient);
+    });
+
+    // Clean up watcher on exit
+    if (memWatcher) {
+      process.on("exit", () => memWatcher.close());
+      process.on("SIGTERM", () => memWatcher.close());
+    }
+  }
 
   // Start inactivity timer
   resetInactivityTimer();

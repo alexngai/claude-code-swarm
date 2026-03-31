@@ -48,6 +48,7 @@ import {
   buildOpentasksBridgeCommands,
   handleNativeTaskCreatedEvent,
   handleNativeTaskUpdatedEvent,
+  buildMinimemBridgeCommand,
 } from "../src/map-events.mjs";
 import { syncSessionlog, dispatchSessionlogHook } from "../src/sessionlog.mjs";
 import { findSocketPath, pushSyncEvent } from "../src/opentasks-client.mjs";
@@ -194,6 +195,18 @@ async function handleSessionlogDispatch(hookData) {
   await dispatchSessionlogHook(sessionlogHookName, hookData);
 }
 
+// ── minimem sync ─────────────────────────────────────────────────────────────
+
+async function handleMinimemMcpUsed(hookData, sessionId) {
+  const config = readConfig();
+  if (!config.minimem?.enabled) return;
+
+  const command = buildMinimemBridgeCommand(hookData);
+  if (command) {
+    await sendCommand(config, command, sessionId);
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -214,6 +227,7 @@ async function main() {
       case "opentasks-mcp-used": await handleOpentasksMcpUsed(hookData, sessionId); break;
       case "native-task-created": await handleNativeTaskCreated(hookData, sessionId); break;
       case "native-task-updated": await handleNativeTaskUpdated(hookData, sessionId); break;
+      case "minimem-mcp-used": await handleMinimemMcpUsed(hookData, sessionId); break;
       case "sessionlog-dispatch": await handleSessionlogDispatch(hookData); break;
       default:
         log.warn("unknown action", { action });

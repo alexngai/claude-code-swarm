@@ -431,12 +431,37 @@ export async function bootstrap(pluginDirOverride, sessionId) {
 
   let minimemStatus = "disabled";
   if (config.minimem?.enabled) {
-    minimemStatus = "enabled";
+    // Check if minimem CLI is available and memory directory exists
+    try {
+      const { execFileSync } = await import("node:child_process");
+      const { existsSync } = await import("node:fs");
+      execFileSync("which", ["minimem"], { stdio: "pipe" });
+      const dir = config.minimem?.dir || ".swarm/minimem";
+      if (existsSync(dir)) {
+        minimemStatus = "ready";
+      } else {
+        // Create the directory and initialize so MCP server can start
+        const { mkdirSync } = await import("node:fs");
+        mkdirSync(dir + "/memory", { recursive: true });
+        try {
+          execFileSync("minimem", ["init", dir], { stdio: "pipe", timeout: 10_000 });
+        } catch { /* init may fail if already initialized */ }
+        minimemStatus = "ready";
+      }
+    } catch {
+      minimemStatus = "enabled"; // CLI not found — MCP server won't start
+    }
   }
 
   let skilltreeStatus = "disabled";
   if (config.skilltree?.enabled) {
-    skilltreeStatus = "enabled";
+    try {
+      const { execFileSync } = await import("node:child_process");
+      execFileSync("which", ["skill-tree"], { stdio: "pipe" });
+      skilltreeStatus = "ready";
+    } catch {
+      skilltreeStatus = "enabled";
+    }
   }
 
   return {

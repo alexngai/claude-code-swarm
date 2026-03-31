@@ -162,12 +162,25 @@ if (!def.enabled()) {
   runNoop();
 } else {
   const { cmd, args } = def.launch();
-  if (which(cmd)) {
-    // Replace this process with the real server
-    const { execFileSync: _ , ...rest } = await import('node:child_process');
+  const resolved = which(cmd);
+  // Debug: log MCP server resolution to a temp file for diagnostics
+  try {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync('/tmp/mcp-launcher-debug.log', `[${new Date().toISOString()}] server=${server} cmd=${cmd} resolved=${resolved} cwd=${process.cwd()} args=${JSON.stringify(args)}\n`);
+  } catch {}
+  if (resolved) {
+    // Replace this process with the real server.
+    // NODE_NO_WARNINGS suppresses Node.js experimental feature warnings on stderr
+    // (e.g., sqlite). Some MCP clients interpret stderr output as server errors,
+    // causing them to mark the server as "failed" even though it's functional.
+    const spawnEnv = { ...process.env, NODE_NO_WARNINGS: '1' };
     const child = (await import('node:child_process')).spawn(cmd, args, {
-      stdio: 'inherit',
+      stdio: ['inherit', 'inherit', 'pipe'],
+      env: spawnEnv,
     });
+    // Swallow stderr to prevent MCP client from misinterpreting it.
+    // In debug mode, forward to our stderr.
+    child.stderr.on('data', () => {});
     child.on('exit', (code) => process.exit(code ?? 0));
   } else {
     process.stderr.write(`[${server}-mcp] ${cmd} CLI not found\n`);

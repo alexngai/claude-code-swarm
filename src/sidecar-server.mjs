@@ -95,6 +95,7 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
   // Use a getter pattern so the connection ref can be updated
   let conn = connection;
   let _trajectoryResourceId = null; // Cached resource_id from server response
+  let _memoryResourceId = null; // Cached resource_id for memory sync
   const { inboxInstance, meshPeer, transportMode = "websocket" } = opts;
   const useMeshRegistry = transportMode === "mesh" && inboxInstance;
 
@@ -386,6 +387,43 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
             } catch { /* best effort */ }
           }
           respond(client, { ok: true });
+          break;
+        }
+
+        // --- Memory/skill sync → MAP (x-openhive vendor extensions) ---
+
+        case "bridge-memory-sync": {
+          const c = conn || await waitForConn();
+          if (c) {
+            try {
+              // Use callExtension for JSON-RPC vendor-prefixed method
+              // Same pattern as trajectory/checkpoint
+              const params = {
+                resource_id: _memoryResourceId || "",
+                agent_id: command.agentId || "minimem",
+                commit_hash: `memory-${Date.now()}`,
+                timestamp: command.timestamp || new Date().toISOString(),
+              };
+              const result = await c.callExtension("x-openhive/memory.sync", params);
+              // Cache resource_id from server response
+              if (result?.resource_id) {
+                _memoryResourceId = result.resource_id;
+              }
+              respond(client, { ok: true, method: "memory-sync", resource_id: result?.resource_id });
+            } catch (err) {
+              log.warn("x-openhive/memory.sync not supported, falling back to broadcast", { error: err.message });
+              // Fallback: emit as a regular message
+              await c.send({ scope }, {
+                type: "memory.sync",
+                agent_id: command.agentId || "minimem",
+                timestamp: command.timestamp,
+                _origin: command.agentId || "minimem",
+              }, { relationship: "broadcast" });
+              respond(client, { ok: true, method: "broadcast-fallback" });
+            }
+          } else {
+            respond(client, { ok: false, error: "no connection" });
+          }
           break;
         }
 

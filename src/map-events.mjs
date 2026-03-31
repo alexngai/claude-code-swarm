@@ -443,3 +443,33 @@ export async function handleNativeTaskUpdatedEvent(config, hookData, sessionId) 
     }, sessionId);
   }
 }
+
+// ── minimem/skill-tree sync → MAP ──────────────────────────────────────────────
+//
+// When agents use minimem MCP tools that write data (append, upsert),
+// emit x-openhive/memory.sync so OpenHive can update its content cache.
+// This is a best-effort notification — the source of truth is the filesystem.
+
+/** Tools that indicate a memory write (vs read-only search) */
+const MINIMEM_WRITE_TOOLS = new Set([
+  "minimem__memory_append",
+  "minimem__memory_upsert",
+]);
+
+/**
+ * Build bridge command for minimem MCP tool use.
+ * Only emits for write operations (append/upsert), not reads.
+ */
+export function buildMinimemBridgeCommand(hookData) {
+  const toolName = hookData.tool_name || "";
+  // Only emit for write operations
+  if (!MINIMEM_WRITE_TOOLS.has(toolName) && !toolName.includes("append") && !toolName.includes("upsert")) {
+    return null;
+  }
+
+  return {
+    action: "bridge-memory-sync",
+    agentId: hookData.session_id || "minimem",
+    timestamp: new Date().toISOString(),
+  };
+}

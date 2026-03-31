@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "agent-inbox": "^0.1.9",
-    "minimem": "^0.1.0",
+    "minimem": "^0.1.1",
     "opentasks": "^0.0.8",
     "skill-tree": "^0.1.5",
     "vitest": "^4.0.18",
