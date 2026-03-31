@@ -40,6 +40,9 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
       capabilities: {
         trajectory: { canReport: true, canServeContent: true },
         tasks: { canCreate: true, canAssign: true, canUpdate: true, canList: true },
+        ...(projectContext?.task_graph ? {
+          opentasks: { canQuery: true, canLink: true, canAnnotate: true, canTask: true },
+        } : {}),
       },
       metadata: {
         systemId,

@@ -335,6 +335,18 @@ async function tryMeshTransport() {
 }
 
 /**
+ * Register opentasks notification handlers on a MAP connection.
+ * Delegates to the extracted opentasks-connector module for testability.
+ */
+async function registerOpenTasksHandler(conn) {
+  const { registerOpenTasksHandler: _register } = await import("../src/opentasks-connector.mjs");
+  return _register(conn, {
+    scope: MAP_SCOPE,
+    onActivity: resetInactivityTimer,
+  });
+}
+
+/**
  * Start with direct MAP SDK WebSocket transport (fallback).
  */
 /**
@@ -403,6 +415,11 @@ async function startWebSocketTransport() {
   // Register trajectory content handler for on-demand transcript serving
   if (connection) {
     registerContentHandler(connection);
+  }
+
+  // Register opentasks connector for remote graph queries (only when opentasks is enabled)
+  if (connection && PROJECT_CONTEXT.task_graph) {
+    await registerOpenTasksHandler(connection);
   }
 
   // Start agent-inbox with MAP connection (legacy mode)
