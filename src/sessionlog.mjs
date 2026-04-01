@@ -30,6 +30,28 @@ function getGitBranch() {
   }
 }
 
+function getGitCommitHash() {
+  try {
+    return execSync("git rev-parse HEAD", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function getGitRemoteUrl() {
+  try {
+    return execSync("git remote get-url origin", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Check if sessionlog is installed and active.
  * Returns 'active', 'installed but not enabled', or 'not installed'.
@@ -179,6 +201,8 @@ export function buildTrajectoryCheckpoint(state, syncLevel, config) {
     // Project context for display + auto-import
     project: path.basename(process.cwd()),
     projectPath: process.cwd(),
+    gitRemoteUrl: getGitRemoteUrl(),
+    gitCommitHash: getGitCommitHash(),
     firstPrompt: state.firstPrompt ? state.firstPrompt.slice(0, 200) : undefined,
     template: config.template || undefined,
   };
