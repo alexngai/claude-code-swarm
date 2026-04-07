@@ -191,12 +191,15 @@ process.on("unhandledRejection", (reason) => {
 function attachReconnectionListener(conn) {
   if (!conn?.onReconnection) return;
 
-  conn.onReconnection((event) => {
+  conn.onReconnection(async (event) => {
     if (event.type === "reconnectFailed") {
       log.warn("SDK reconnection exhausted, starting slow retry loop", { error: event.error?.message, intervalMs: RECONNECT_INTERVAL_MS });
       startSlowReconnectLoop();
     } else if (event.type === "reconnected") {
-      log.info("SDK reconnected to MAP server");
+      log.info("SDK reconnected to MAP server, re-registering agents");
+      // The server lost session state on restart — re-register all agents
+      // so the hub's connection registry knows about them again.
+      await reRegisterAgents(conn);
     } else if (event.type === "disconnected") {
       log.warn("disconnected from MAP server, SDK will attempt reconnection");
     }
