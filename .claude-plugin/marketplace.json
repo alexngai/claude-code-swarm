@@ -1,6 +1,6 @@
 {
   "name": "claude-code-swarm",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "description": "Launch Claude Code with swarmkit capabilities, including team orchestration, MAP observability, and session tracking.",
   "owner": {
     "name": "alexngai"
