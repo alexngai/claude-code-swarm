@@ -7,15 +7,21 @@
  * watcher is the only way to detect when an agent writes to memory.
  *
  * Runs inside the MAP sidecar process (persistent for the session).
+ *
+ * Uses Node's built-in fs.watch (recursive) instead of chokidar to avoid
+ * an external dependency. Requires Node 20+ for recursive on Linux.
  */
 
-import chokidar from "chokidar";
-import { existsSync } from "fs";
+import { watch, existsSync } from "fs";
+import { resolve } from "path";
 import { createLogger } from "./log.mjs";
 
 const log = createLogger("memory-watcher");
 
 const DEBOUNCE_MS = 2000;
+
+/** Patterns to ignore (matched against the relative filename). */
+const IGNORED = [/node_modules/, /\.git/, /index\.db/, /\.cache/, /\.minimem/];
 
 /**
  * Start watching a minimem directory for file changes.
@@ -32,36 +38,38 @@ export function startMemoryWatcher(memoryDir, onSync) {
   }
 
   let debounceTimer = null;
+  const absDir = resolve(memoryDir);
 
-  const watcher = chokidar.watch(memoryDir, {
-    ignoreInitial: true,
-    ignored: [/node_modules/, /\.git/, /index\.db/, /\.cache/, /\.minimem/],
-    depth: 3,
-  });
+  let watcher;
+  try {
+    watcher = watch(absDir, { recursive: true }, (eventType, filename) => {
+      if (!filename) return;
 
-  function debouncedSync(eventType, filePath) {
-    // Only react to .md file changes
-    if (!filePath.endsWith(".md")) return;
+      // Only react to .md file changes
+      if (!filename.endsWith(".md")) return;
 
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      log.debug("memory change detected", { event: eventType, path: filePath });
-      onSync({ type: eventType, path: filePath });
-    }, DEBOUNCE_MS);
+      // Skip ignored patterns
+      if (IGNORED.some((re) => re.test(filename))) return;
+
+      const fullPath = resolve(absDir, filename);
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        log.debug("memory change detected", { event: eventType, path: fullPath });
+        onSync({ type: eventType, path: fullPath });
+      }, DEBOUNCE_MS);
+    });
+  } catch (err) {
+    log.warn("memory watcher failed to start", { error: err.message });
+    return null;
   }
-
-  watcher.on("add", (p) => debouncedSync("add", p));
-  watcher.on("change", (p) => debouncedSync("change", p));
-  watcher.on("unlink", (p) => debouncedSync("unlink", p));
-
-  watcher.on("ready", () => {
-    log.info("memory watcher started", { dir: memoryDir });
-  });
 
   watcher.on("error", (err) => {
     log.warn("memory watcher error", { error: err.message });
   });
+
+  log.info("memory watcher started", { dir: memoryDir });
 
   return {
     close() {
