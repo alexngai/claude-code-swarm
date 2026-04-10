@@ -398,6 +398,15 @@ Both modes:
 - Report trajectory checkpoints via `trajectory/checkpoint` (with broadcast fallback)
 - Self-terminate after 30 minutes of inactivity (session mode)
 
+**MAP capabilities declared** (in `src/map-connection.mjs`):
+- `messaging: { canSend: true, canReceive: true }` — can exchange MAP scope messages
+- `mail: { canCreate: true, canJoin: true, canViewHistory: true }` — supports agent-inbox conversations (enables Mail chat mode in OpenHive session view)
+- `trajectory: { canReport: true, canServeContent: true }` — reports checkpoints, serves transcript content on demand
+- `tasks: { canCreate, canAssign, canUpdate, canList }` — task management
+- `opentasks: { canQuery, canLink, canAnnotate, canTask }` — conditional, when task_graph configured
+
+Message delivery is **pull-based**: the `UserPromptSubmit` hook reads the inbox on each turn and injects messages into Claude Code's prompt context. No real-time push delivery.
+
 The hook helper (`scripts/map-hook.mjs`) includes best-effort auto-recovery: if the sidecar is down, it attempts to restart it, with a fire-and-forget fallback (mesh or direct WebSocket) if recovery fails.
 
 ### OpenTasks integration

@@ -24,7 +24,7 @@ const log = createLogger("map");
  *   authRequired challenge with the server's preferred method + this credential.
  *   When absent, uses the standard SDK connect() for open mode servers.
  */
-export async function connectToMAP({ server, scope, systemId, onMessage, credential, projectContext }) {
+export async function connectToMAP({ server, scope, systemId, onMessage, credential, projectContext, inboxEnabled }) {
   try {
     const mapSdk = await resolvePackage("@multi-agent-protocol/sdk");
     if (!mapSdk) throw new Error("@multi-agent-protocol/sdk not available");
@@ -38,6 +38,12 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
       role: "sidecar",
       scopes: [scope],
       capabilities: {
+        // Messaging and mail capabilities are conditional on agent-inbox being available.
+        // Without inbox, the sidecar can't receive messages or participate in conversations.
+        ...(inboxEnabled ? {
+          messaging: { canSend: true, canReceive: true },
+          mail: { canCreate: true, canJoin: true, canViewHistory: true },
+        } : {}),
         trajectory: { canReport: true, canServeContent: true },
         tasks: { canCreate: true, canAssign: true, canUpdate: true, canList: true },
         ...(projectContext?.task_graph ? {

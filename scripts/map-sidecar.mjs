@@ -224,6 +224,7 @@ function startSlowReconnectLoop() {
         systemId: SYSTEM_ID,
         credential: AUTH_CREDENTIAL || undefined,
         projectContext: PROJECT_CONTEXT,
+        inboxEnabled: !!INBOX_CONFIG || MESH_ENABLED,
         onMessage: () => resetInactivityTimer(),
       });
 
@@ -409,6 +410,7 @@ async function startWebSocketTransport() {
     systemId: SYSTEM_ID,
     credential: AUTH_CREDENTIAL || undefined,
     projectContext: PROJECT_CONTEXT,
+    inboxEnabled: !!INBOX_CONFIG || MESH_ENABLED,
     onMessage: () => {
       resetInactivityTimer();
     },
