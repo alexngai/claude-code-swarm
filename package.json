@@ -24,7 +24,7 @@
   },
   "peerDependencies": {
     "agent-inbox": "*",
-    "opentasks": "*",
+    "opentasks": ">=0.1.0",
     "swarmkit": "*"
   },
   "peerDependenciesMeta": {
@@ -55,7 +55,7 @@
   "devDependencies": {
     "agent-inbox": "^0.1.9",
     "minimem": "^0.1.1",
-    "opentasks": "^0.0.8",
+    "opentasks": "^0.1.0",
     "skill-tree": "^0.1.5",
     "vitest": "^4.0.18",
     "ws": "^8.0.0"
