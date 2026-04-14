@@ -63,13 +63,13 @@ export async function registerOpenTasksHandler(conn, options = {}) {
       agentId: `${scope}-sidecar`,
     });
 
-    // Register handlers for all 4 request methods
-    const requestMethods = [
-      MAP_CONNECTOR_METHODS.QUERY_REQUEST,
-      MAP_CONNECTOR_METHODS.LINK_REQUEST,
-      MAP_CONNECTOR_METHODS.ANNOTATE_REQUEST,
-      MAP_CONNECTOR_METHODS.TASK_REQUEST,
-    ];
+    // Subscribe to every `opentasks/*.request` method the opentasks package
+    // exports. Iterating MAP_CONNECTOR_METHODS (rather than hardcoding a list)
+    // means new request methods added upstream — e.g. graph.create.request,
+    // graph.update.request — are wired up automatically.
+    const requestMethods = Object.values(MAP_CONNECTOR_METHODS).filter(
+      (m) => typeof m === "string" && m.endsWith(".request"),
+    );
 
     for (const method of requestMethods) {
       conn.onNotification(method, async (params) => {

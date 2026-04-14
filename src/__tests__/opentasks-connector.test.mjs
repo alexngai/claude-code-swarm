@@ -5,9 +5,17 @@ import { registerOpenTasksHandler } from "../opentasks-connector.mjs";
 
 const MOCK_METHODS = {
   QUERY_REQUEST: "opentasks/query.request",
+  QUERY_RESPONSE: "opentasks/query.response",
   LINK_REQUEST: "opentasks/link.request",
+  LINK_RESPONSE: "opentasks/link.response",
   ANNOTATE_REQUEST: "opentasks/annotate.request",
+  ANNOTATE_RESPONSE: "opentasks/annotate.response",
   TASK_REQUEST: "opentasks/task.request",
+  TASK_RESPONSE: "opentasks/task.response",
+  GRAPH_CREATE_REQUEST: "opentasks/graph.create.request",
+  GRAPH_CREATE_RESPONSE: "opentasks/graph.create.response",
+  GRAPH_UPDATE_REQUEST: "opentasks/graph.update.request",
+  GRAPH_UPDATE_RESPONSE: "opentasks/graph.update.response",
 };
 
 function createMockConnection() {
@@ -89,16 +97,53 @@ describe("registerOpenTasksHandler", () => {
     expect(callArgs.agentId).toBe("swarm:test-sidecar");
   });
 
-  it("registers onNotification for all 4 request methods", async () => {
+  it("registers onNotification for every *.request method exported by opentasks", async () => {
     await callRegister();
 
-    expect(mockConn.onNotification).toHaveBeenCalledTimes(4);
+    const expectedRequestMethods = Object.values(MOCK_METHODS).filter((m) =>
+      m.endsWith(".request"),
+    );
+    expect(mockConn.onNotification).toHaveBeenCalledTimes(expectedRequestMethods.length);
 
     const registeredMethods = mockConn.onNotification.mock.calls.map((c) => c[0]);
     expect(registeredMethods).toContain(MOCK_METHODS.QUERY_REQUEST);
     expect(registeredMethods).toContain(MOCK_METHODS.LINK_REQUEST);
     expect(registeredMethods).toContain(MOCK_METHODS.ANNOTATE_REQUEST);
     expect(registeredMethods).toContain(MOCK_METHODS.TASK_REQUEST);
+    expect(registeredMethods).toContain(MOCK_METHODS.GRAPH_CREATE_REQUEST);
+    expect(registeredMethods).toContain(MOCK_METHODS.GRAPH_UPDATE_REQUEST);
+  });
+
+  it("does not register response methods (only .request is subscribed)", async () => {
+    await callRegister();
+
+    const registeredMethods = mockConn.onNotification.mock.calls.map((c) => c[0]);
+    const responseMethods = registeredMethods.filter((m) => m.endsWith(".response"));
+    expect(responseMethods).toEqual([]);
+  });
+
+  it("forwards graph.create.request to the connector", async () => {
+    await callRegister();
+
+    const params = { request_id: "req-c1", create: { type: "task", title: "New" } };
+    await mockConn._fireNotification(MOCK_METHODS.GRAPH_CREATE_REQUEST, params);
+
+    expect(mockOpentasks._connector.handleNotification).toHaveBeenCalledWith(
+      MOCK_METHODS.GRAPH_CREATE_REQUEST,
+      params,
+    );
+  });
+
+  it("forwards graph.update.request to the connector", async () => {
+    await callRegister();
+
+    const params = { request_id: "req-u1", update: { id: "n-1", title: "Renamed" } };
+    await mockConn._fireNotification(MOCK_METHODS.GRAPH_UPDATE_REQUEST, params);
+
+    expect(mockOpentasks._connector.handleNotification).toHaveBeenCalledWith(
+      MOCK_METHODS.GRAPH_UPDATE_REQUEST,
+      params,
+    );
   });
 
   it("forwards notifications to connector.handleNotification", async () => {
