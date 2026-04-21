@@ -24,6 +24,7 @@ import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths, pluginDir } fro
 import { connectToMAP } from "../src/map-connection.mjs";
 import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
+import { startOpenTasksEventBridge } from "../src/opentasks-bridge.mjs";
 import { createContentProvider } from "../src/content-provider.mjs";
 import { startMemoryWatcher } from "../src/memory-watcher.mjs";
 import { readConfig } from "../src/config.mjs";
@@ -123,6 +124,7 @@ let inboxInstance = null;
 let inactivityTimer = null;
 let reconnectInterval = null;
 let transportMode = "websocket"; // "mesh" or "websocket"
+let opentasksBridge = null; // Daemon watch → MAP event bridge (Option A)
 const registeredAgents = new Map();
 
 // ── Inactivity Timer ────────────────────────────────────────────────────────
@@ -142,6 +144,13 @@ async function shutdown() {
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
   if (reconnectInterval) clearInterval(reconnectInterval);
+
+  // Stop opentasks event bridge before the MAP connection drops — the
+  // bridge needs a live connection to send its unsubscribe over.
+  if (opentasksBridge) {
+    try { await opentasksBridge.stop(); } catch { /* ignore */ }
+    opentasksBridge = null;
+  }
 
   // Stop agent-inbox first (it borrows the connection/peer, doesn't own it)
   if (inboxInstance) {
@@ -241,6 +250,19 @@ function startSlowReconnectLoop() {
 
         // Re-subscribe inbox events to the new connection
         subscribeInboxEvents(newConn);
+
+        // Re-attach opentasks event bridge to the fresh connection —
+        // the previous bridge was bound to the dead one.
+        if (opentasksBridge) {
+          try { await opentasksBridge.stop(); } catch { /* ignore */ }
+          opentasksBridge = null;
+        }
+        if (PROJECT_CONTEXT.task_graph) {
+          opentasksBridge = await startOpenTasksEventBridge(newConn, {
+            scope: MAP_SCOPE,
+            onActivity: resetInactivityTimer,
+          });
+        }
 
         log.info("reconnected to MAP server");
       }
@@ -426,6 +448,18 @@ async function startWebSocketTransport() {
   // Register opentasks connector for remote graph queries (only when opentasks is enabled)
   if (connection && PROJECT_CONTEXT.task_graph) {
     await registerOpenTasksHandler(connection);
+  }
+
+  // Start the opentasks → MAP event bridge — surfaces every graph
+  // change (context/spec nodes in particular) as a MAP event over the
+  // shared connection. Task-event emission is suppressed inside the
+  // bridge to avoid double-sending alongside the existing PostToolUse
+  // `bridge-task-*` command chain.
+  if (connection && PROJECT_CONTEXT.task_graph) {
+    opentasksBridge = await startOpenTasksEventBridge(connection, {
+      scope: MAP_SCOPE,
+      onActivity: resetInactivityTimer,
+    });
   }
 
   // Start agent-inbox with MAP connection (legacy mode)
