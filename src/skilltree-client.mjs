@@ -151,30 +151,60 @@ export function inferProfileFromRole(roleName) {
 
 /**
  * Compile skill loadouts for all roles in a team manifest.
- * Reads the skilltree extension from the manifest, compiles loadouts per role.
- * Returns metadata alongside content for richer agent context.
+ *
+ * Priority for per-role criteria:
+ *   1. openteams `role.loadout.skills` (if a ResolvedTemplate is supplied)
+ *   2. team.yaml `skilltree:` extension (roles.<name>) + defaults
+ *   3. config.defaultProfile
+ *   4. ROLE_PROFILE_MAP auto-inference from role name
  *
  * @param {object} manifest - Parsed team.yaml manifest
  * @param {object} config - Plugin config (skilltree section)
+ * @param {object} [template] - Optional openteams ResolvedTemplate.
+ *                              When supplied, `role.loadout.skills` wins
+ *                              over `skilltree:` extension values.
  * @returns {Promise<object>} Map of roleName → { content, profile }
  */
-export async function compileAllRoleLoadouts(manifest, config) {
+export async function compileAllRoleLoadouts(manifest, config, template = null) {
   const { defaults, roles: roleOverrides } = parseSkillTreeExtension(manifest);
   const allRoles = manifest.roles || [];
   const result = {};
 
+  // Normalize template.roles into a lookup (supports Map or plain object)
+  const templateRoles = normalizeRolesMap(template?.roles);
+
   for (const roleName of allRoles) {
-    // Merge defaults with role-specific overrides
-    const roleCriteria = roleOverrides[roleName]
+    // Step 1: start with skilltree extension criteria (defaults + per-role override)
+    let roleCriteria = roleOverrides[roleName]
       ? { ...defaults, ...roleOverrides[roleName] }
       : { ...defaults };
 
-    // Fallback chain for profile selection
-    if (!roleCriteria.profile && !roleCriteria.tags && !roleCriteria.include && !roleCriteria.taskDescription) {
+    // Step 2: if openteams role.loadout.skills is present, overlay it
+    // (loadout is the newer, first-class primitive — it wins).
+    const loadoutSkills = templateRoles?.get(roleName)?.loadout?.skills;
+    if (loadoutSkills) {
+      if (loadoutSkills.profile) roleCriteria.profile = loadoutSkills.profile;
+      if (loadoutSkills.include?.length) {
+        roleCriteria.include = mergeUnique(roleCriteria.include, loadoutSkills.include);
+      }
+      if (loadoutSkills.exclude?.length) {
+        roleCriteria.exclude = mergeUnique(roleCriteria.exclude, loadoutSkills.exclude);
+      }
+      if (typeof loadoutSkills.max_tokens === "number") {
+        roleCriteria.maxTokens = loadoutSkills.max_tokens;
+      }
+    }
+
+    // Step 3: fallback chain for profile selection (unchanged)
+    if (
+      !roleCriteria.profile &&
+      !roleCriteria.tags &&
+      !roleCriteria.include &&
+      !roleCriteria.taskDescription
+    ) {
       if (config?.defaultProfile) {
         roleCriteria.profile = config.defaultProfile;
       } else {
-        // Auto-infer from role name
         const inferred = inferProfileFromRole(roleName);
         if (inferred) {
           roleCriteria.profile = inferred;
@@ -194,4 +224,18 @@ export async function compileAllRoleLoadouts(manifest, config) {
   }
 
   return result;
+}
+
+function normalizeRolesMap(roles) {
+  if (!roles) return null;
+  if (roles instanceof Map) return roles;
+  if (typeof roles === "object") return new Map(Object.entries(roles));
+  return null;
+}
+
+function mergeUnique(a, b) {
+  const out = new Set();
+  for (const x of a ?? []) out.add(x);
+  for (const x of b ?? []) out.add(x);
+  return [...out];
 }

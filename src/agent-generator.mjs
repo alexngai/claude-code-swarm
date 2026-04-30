@@ -7,7 +7,16 @@
 
 import fs from "fs";
 import path from "path";
+import yaml from "js-yaml";
 import { buildCapabilitiesContext } from "./context-output.mjs";
+import { materializeLoadout } from "./loadout-materializer.mjs";
+
+/**
+ * Default command path for the scope-check PreToolUse hook.
+ * Claude Code expands ${CLAUDE_PLUGIN_ROOT} at runtime.
+ */
+const DEFAULT_HOOK_COMMAND =
+  "${CLAUDE_PLUGIN_ROOT}/scripts/scope-check.mjs";
 
 /**
  * Parse team.yaml without js-yaml dependency (basic YAML subset).
@@ -41,6 +50,67 @@ export function parseBasicYaml(content) {
     }
   }
   return result;
+}
+
+/**
+ * Build the frontmatter lines for an AGENT.md file.
+ *
+ * When `loadout` is provided, uses the loadout-materializer to produce
+ * enriched frontmatter (mcpServers, disallowedTools, hooks, capabilities).
+ * Otherwise falls back to the minimal legacy shape (name, description,
+ * model, tools).
+ *
+ * Returns an array of lines (no leading/trailing `---`).
+ */
+export function buildAgentFrontmatterLines({
+  roleName,
+  teamName,
+  description,
+  model,
+  tools,
+  loadout,
+  template,
+  hookCommand,
+  scopeFilePath,
+  projectPath,
+  position,
+}) {
+  if (!loadout) {
+    // Legacy minimal frontmatter — preserved verbatim for back-compat.
+    const lines = [];
+    lines.push(`name: ${teamName}-${roleName}`);
+    lines.push(`description: "${(description ?? "").replace(/"/g, '\\"')}"`);
+    if (model) lines.push(`model: ${model}`);
+    if (tools && tools.length > 0) {
+      lines.push(`tools: [${tools.join(", ")}]`);
+    }
+    return lines;
+  }
+
+  // Loadout-enriched frontmatter via materializer.
+  const { frontmatter } = materializeLoadout({
+    role: { name: roleName, description },
+    loadout,
+    template,
+    options: {
+      teamName,
+      hookCommand,
+      scopeFilePath,
+      projectPath,
+      nativeTools: tools,
+      position,
+    },
+  });
+  if (model) frontmatter.model = model;
+
+  // Serialize via js-yaml and split into lines so the caller can emit
+  // them between `---` fences.
+  const dumped = yaml.dump(frontmatter, {
+    lineWidth: 120,
+    noRefs: true,
+    sortKeys: false,
+  });
+  return dumped.replace(/\n+$/, "").split("\n");
 }
 
 /**
@@ -79,6 +149,11 @@ export function determineTools(roleName, manifest, position, options = {}) {
 
 /**
  * Generate a Claude Code AGENT.md file content for a single role.
+ *
+ * When `loadout` is provided, the frontmatter is enriched via the
+ * loadout-materializer — adds mcpServers, disallowedTools, hooks,
+ * capabilities, and generator marker fields. When omitted, falls back
+ * to the legacy minimal frontmatter shape.
  */
 export function generateAgentMd({
   roleName,
@@ -103,19 +178,30 @@ export function generateAgentMd({
   mapEnabled,
   mapStatus,
   sessionlogSync,
+  // Loadout materialization (all optional — fall back to legacy frontmatter if absent)
+  loadout,
+  template,
+  hookCommand,
+  scopeFilePath,
+  projectPath,
 }) {
   const lines = [];
 
   // Claude Code AGENT.md frontmatter
   lines.push("---");
-  lines.push(`name: ${teamName}-${roleName}`);
-  lines.push(`description: "${description.replace(/"/g, '\\"')}"`);
-  if (model) {
-    lines.push(`model: ${model}`);
-  }
-  if (tools && tools.length > 0) {
-    lines.push(`tools: [${tools.join(", ")}]`);
-  }
+  lines.push(...buildAgentFrontmatterLines({
+    roleName,
+    teamName,
+    description,
+    model,
+    tools,
+    loadout,
+    template,
+    hookCommand: hookCommand || DEFAULT_HOOK_COMMAND,
+    scopeFilePath,
+    projectPath,
+    position,
+  }));
   lines.push("---");
   lines.push("");
 
@@ -292,6 +378,41 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
 
       const tools = determineTools(roleName, manifest, position, options);
 
+      // Compute the scope file path the per-agent hook will read at runtime.
+      // Default: sibling of the agents output dir (<output>/../scope/<role>.json).
+      // When the role has a loadout, we ALSO write the scope file there so
+      // the frontmatter's SCOPE_FILE path always resolves at runtime.
+      const scopeDirAbs = options.scopeBasePath
+        ? path.resolve(options.scopeBasePath)
+        : path.resolve(absOutputDir, "..", "scope");
+      const scopeFileAbs = path.join(scopeDirAbs, `${roleName}.json`);
+      const scopeFilePath = options.projectPath
+        ? path.relative(options.projectPath, scopeFileAbs)
+        : scopeFileAbs;
+
+      if (role?.loadout) {
+        try {
+          const { scopeFile: scopeFileContent } = materializeLoadout({
+            role: {
+              name: roleName,
+              description: role.description,
+              displayName: role.displayName,
+            },
+            loadout: role.loadout,
+            template,
+            options: { teamName, scopeFilePath },
+          });
+          fs.mkdirSync(scopeDirAbs, { recursive: true });
+          fs.writeFileSync(
+            scopeFileAbs,
+            JSON.stringify(scopeFileContent, null, 2),
+            "utf-8"
+          );
+        } catch {
+          // Non-fatal — frontmatter still references the path; hook fails open
+        }
+      }
+
       const agentMd = generateAgentMd({
         roleName,
         teamName,
@@ -301,6 +422,12 @@ export async function generateAllAgents(templateDir, outputDir, options = {}) {
         tools,
         skillContent: roleSkill.content,
         manifest,
+        // Loadout integration (only kicks in when role.loadout is set in openteams)
+        loadout: role?.loadout,
+        template,
+        scopeFilePath,
+        projectPath: options.projectPath,
+        hookCommand: options.hookCommand,
         opentasksEnabled: options.opentasksEnabled,
         opentasksStatus: options.opentasksStatus,
         minimemEnabled: options.minimemEnabled,

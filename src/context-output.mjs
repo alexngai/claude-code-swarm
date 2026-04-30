@@ -7,6 +7,8 @@
  */
 
 import fs from "fs";
+import path from "path";
+import { formatHealthReport } from "./mcp-health-checker.mjs";
 
 // ── Capabilities context (shared between main agent + spawned agents) ────────
 
@@ -259,6 +261,36 @@ export function formatBootstrapContext({
 
     lines.push(`Agent prompts: \`${team.outputDir}/agents/<role>.md\``);
     lines.push("");
+
+    // MCP health report (from loadout-aware caching) — non-blocking, informational.
+    // Only surface when the team declared providers or any loadout referenced
+    // a server; otherwise skip silently to avoid noise in non-loadout templates.
+    try {
+      const healthPath = path.join(team.outputDir, "mcp-health.json");
+      if (fs.existsSync(healthPath)) {
+        const report = JSON.parse(fs.readFileSync(healthPath, "utf-8"));
+        const anything =
+          (report.ok?.length ?? 0) +
+          (report.missing?.length ?? 0) +
+          (report.refs?.length ?? 0) +
+          (report.disabled?.length ?? 0) +
+          (report.orphanedReferences?.length ?? 0);
+        if (anything > 0) {
+          const rendered = formatHealthReport(report, { teamName: team.teamName });
+          lines.push(rendered);
+          lines.push("");
+          if (report.missing?.length > 0 || report.orphanedReferences?.length > 0) {
+            lines.push(
+              "Run `/swarm-mcp check` for details or `/swarm-mcp install <name>` " +
+                "to explicitly add a declared provider to your `.mcp.json`."
+            );
+            lines.push("");
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — health is informational, never blocks bootstrap.
+    }
   }
 
   lines.push(

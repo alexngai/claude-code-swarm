@@ -13,6 +13,12 @@ import { getGlobalNodeModules } from "./swarmkit-resolver.mjs";
 import { teamDir } from "./paths.mjs";
 import { writeRoles } from "./roles.mjs";
 import { createLogger } from "./log.mjs";
+import { materializeLoadout } from "./loadout-materializer.mjs";
+import {
+  checkMcpHealth,
+  collectScopeReferences,
+  discoverActiveSet,
+} from "./mcp-health-checker.mjs";
 
 const log = createLogger("template");
 import { readConfig } from "./config.mjs";
@@ -151,7 +157,10 @@ export async function loadTeam(templateName) {
     // Use template name as fallback
   }
 
-  // Compile skill-tree loadouts if enabled (cached alongside template artifacts)
+  // Compile skill-tree loadouts if enabled (cached alongside template artifacts).
+  // When openteams is available, we also pass the full ResolvedTemplate so
+  // compileAllRoleLoadouts can read `role.loadout.skills` (first-class) in
+  // addition to the legacy `skilltree:` extension.
   const config = readConfig();
   if (config.skilltree?.enabled) {
     const loadoutsPath = path.join(outputDir, "skill-loadouts.json");
@@ -159,7 +168,20 @@ export async function loadTeam(templateName) {
       try {
         const { compileAllRoleLoadouts } = await import("./skilltree-client.mjs");
         const manifest = readTeamManifest(templatePath);
-        const loadouts = await compileAllRoleLoadouts(manifest, config.skilltree);
+        let template = null;
+        const ot = loadOpenteams();
+        if (ot?.TemplateLoader) {
+          try {
+            template = ot.TemplateLoader.load(templatePath);
+          } catch (err) {
+            log.warn("template load for skill-tree failed", { error: err.message });
+          }
+        }
+        const loadouts = await compileAllRoleLoadouts(
+          manifest,
+          config.skilltree,
+          template
+        );
         if (Object.keys(loadouts).length > 0) {
           fs.writeFileSync(loadoutsPath, JSON.stringify(loadouts, null, 2), "utf-8");
         }
@@ -169,7 +191,141 @@ export async function loadTeam(templateName) {
     }
   }
 
+  // Cache openteams loadout artifacts (per-role scope + providers + health report).
+  // Always regenerates on loadTeam — fresh active-set discovery each session.
+  try {
+    cacheLoadoutArtifacts({ templatePath, outputDir, templateName, teamName });
+  } catch (err) {
+    log.warn("loadout artifact caching failed", { error: err.message });
+  }
+
   return { success: true, templateName, templatePath, outputDir, teamName, cached };
+}
+
+/**
+ * Materialize per-role loadout artifacts + team MCP state to the
+ * per-template cache directory. Side-effecting; only writes under
+ * `outputDir`. Best-effort — errors are logged but don't fail loadTeam.
+ *
+ * Written outputs (all under `outputDir`):
+ *   loadouts/<role>.json   — openteams LoadoutArtifacts (inspection + debug)
+ *   scope/<role>.json      — runtime scope file read by the scope-check hook
+ *   mcp-providers.json     — team.mcp_providers as a plain object (when non-empty)
+ *   mcp-health.json        — health report: ok / missing / refs / orphaned
+ */
+export function cacheLoadoutArtifacts({
+  templatePath,
+  outputDir,
+  templateName,
+  teamName,
+} = {}) {
+  const ot = loadOpenteams();
+  if (!ot?.TemplateLoader) return;
+
+  let template;
+  try {
+    template = ot.TemplateLoader.load(templatePath);
+  } catch (err) {
+    log.warn("template load failed during loadout caching", { error: err.message });
+    return;
+  }
+
+  const loadouts = template?.roles ?? new Map();
+  const providers = template?.mcpProviders ?? new Map();
+  const name = teamName || template?.manifest?.name || templateName;
+
+  // Per-role artifacts
+  const loadoutsDir = path.join(outputDir, "loadouts");
+  const scopeDir = path.join(outputDir, "scope");
+
+  // Short-circuit if there are no loadouts at all — avoid creating empty dirs.
+  const rolesWithLoadouts = [];
+  for (const [roleName, role] of loadouts) {
+    if (role?.loadout) rolesWithLoadouts.push([roleName, role]);
+  }
+
+  if (rolesWithLoadouts.length > 0) {
+    fs.mkdirSync(loadoutsDir, { recursive: true });
+    fs.mkdirSync(scopeDir, { recursive: true });
+
+    for (const [roleName, role] of rolesWithLoadouts) {
+      // Dump openteams' artifact view for debugging/observability.
+      if (ot.generateLoadoutArtifacts) {
+        try {
+          const artifacts = ot.generateLoadoutArtifacts(role.loadout);
+          fs.writeFileSync(
+            path.join(loadoutsDir, `${roleName}.json`),
+            JSON.stringify(artifacts, null, 2),
+            "utf-8"
+          );
+        } catch (err) {
+          log.warn("generateLoadoutArtifacts failed", {
+            role: roleName,
+            error: err.message,
+          });
+        }
+      }
+
+      // Scope file — consumed at runtime by scripts/scope-check.mjs
+      const scopeFilePath = path.join(scopeDir, `${roleName}.json`);
+      try {
+        const { scopeFile, warnings } = materializeLoadout({
+          role: {
+            name: roleName,
+            description: role.description,
+            displayName: role.displayName,
+          },
+          loadout: role.loadout,
+          template,
+          options: { teamName: name, scopeFilePath },
+        });
+        fs.writeFileSync(
+          scopeFilePath,
+          JSON.stringify(scopeFile, null, 2),
+          "utf-8"
+        );
+        for (const w of warnings) log.warn(w);
+      } catch (err) {
+        log.warn("scope-file materialization failed", {
+          role: roleName,
+          error: err.message,
+        });
+      }
+    }
+  }
+
+  // Team-level providers map
+  const providersObj =
+    providers instanceof Map ? Object.fromEntries(providers) : providers || {};
+  if (Object.keys(providersObj).length > 0) {
+    fs.writeFileSync(
+      path.join(outputDir, "mcp-providers.json"),
+      JSON.stringify(providersObj, null, 2),
+      "utf-8"
+    );
+  }
+
+  // Health report — regenerated each session against current active set
+  try {
+    const pluginPath = process.env.CLAUDE_PLUGIN_ROOT;
+    const activeSet = discoverActiveSet({
+      projectPath: process.cwd(),
+      pluginPath,
+    });
+    const scopeReferences = collectScopeReferences(template.loadouts ?? new Map());
+    const report = checkMcpHealth({
+      providers,
+      activeSet,
+      scopeReferences,
+    });
+    fs.writeFileSync(
+      path.join(outputDir, "mcp-health.json"),
+      JSON.stringify(report, null, 2),
+      "utf-8"
+    );
+  } catch (err) {
+    log.warn("mcp health check failed", { error: err.message });
+  }
 }
 
 /**
