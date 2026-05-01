@@ -4,8 +4,7 @@
  * Asserts that the openteams `loadout.skills` schema (SkillsConfig) and
  * skilltree-client's bridge mapping stay in sync. skill-tree is the
  * mechanism; openteams' `loadout.skills` is the declaration that
- * dispatches into it. See openhive's docs/LOADOUT_INTEGRATION.md for
- * the model.
+ * dispatches into it.
  *
  * What this test catches:
  *   - openteams adds a new field to SkillsConfig and the bridge doesn't

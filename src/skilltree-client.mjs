@@ -155,7 +155,7 @@ export function inferProfileFromRole(roleName) {
 // The bridge between openteams `loadout.skills` (SkillsConfig in the
 // schema) and skill-tree's LoadoutCriteria. skill-tree is the
 // *mechanism*; openteams is the *declaration layer* that dispatches
-// into it. See openhive's docs/LOADOUT_INTEGRATION.md for the model.
+// into it.
 //
 // Bridged fields are locked in by src/__tests__/loadout-schema-bridge.test.mjs
 // which cross-references this list against openteams' SkillsConfig schema.
