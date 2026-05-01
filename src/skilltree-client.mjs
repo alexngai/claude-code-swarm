@@ -149,70 +149,137 @@ export function inferProfileFromRole(roleName) {
   return "";
 }
 
+// ────────────────────────────────────────────────────────────────
+// Openteams ↔ skill-tree bridge
+//
+// The bridge between openteams `loadout.skills` (SkillsConfig in the
+// schema) and skill-tree's LoadoutCriteria. skill-tree is the
+// *mechanism*; openteams is the *declaration layer* that dispatches
+// into it. See openhive's docs/LOADOUT_INTEGRATION.md for the model.
+//
+// Bridged fields are locked in by src/__tests__/loadout-schema-bridge.test.mjs
+// which cross-references this list against openteams' SkillsConfig schema.
+// Adding a field on either side without updating the other fails the test.
+// ────────────────────────────────────────────────────────────────
+
+/** Fields on openteams `loadout.skills` that the bridge maps into
+ * LoadoutCriteria. Order is the order they appear in openteams'
+ * `loadout.schema.json` $defs.SkillsConfig.properties. */
+export const OPENTEAMS_BRIDGED_FIELDS = Object.freeze([
+  "profile",
+  "include",
+  "exclude",
+  "max_tokens",
+]);
+
 /**
- * Compile skill loadouts for all roles in a team manifest.
+ * Overlay an openteams `loadout.skills` block onto a skill-tree
+ * `LoadoutCriteria`. Pure function — returns a new object, does not
+ * mutate the input.
  *
- * Priority for per-role criteria:
- *   1. openteams `role.loadout.skills` (if a ResolvedTemplate is supplied)
- *   2. team.yaml `skilltree:` extension (roles.<name>) + defaults
- *   3. config.defaultProfile
- *   4. ROLE_PROFILE_MAP auto-inference from role name
+ * Mapping:
+ *   profile     → criteria.profile     (replace if set)
+ *   include     → criteria.include     (union, deduped)
+ *   exclude     → criteria.exclude     (union, deduped)
+ *   max_tokens  → criteria.maxTokens   (replace if set)
+ *
+ * Passing null/undefined for `loadoutSkills` returns a shallow copy of
+ * the input criteria unchanged.
+ */
+export function mergeOpenteamsSkillsIntoCriteria(criteria, loadoutSkills) {
+  const merged = { ...(criteria ?? {}) };
+  if (!loadoutSkills) return merged;
+  if (loadoutSkills.profile) merged.profile = loadoutSkills.profile;
+  if (loadoutSkills.include?.length) {
+    merged.include = mergeUnique(merged.include, loadoutSkills.include);
+  }
+  if (loadoutSkills.exclude?.length) {
+    merged.exclude = mergeUnique(merged.exclude, loadoutSkills.exclude);
+  }
+  if (typeof loadoutSkills.max_tokens === "number") {
+    merged.maxTokens = loadoutSkills.max_tokens;
+  }
+  return merged;
+}
+
+/**
+ * Resolve the LoadoutCriteria for a single role. Pure function — no I/O.
+ * Returns null when no criteria can be derived (signals to the caller
+ * that the role should be skipped).
+ *
+ * Priority order:
+ *   1. team.yaml `skilltree:` extension defaults
+ *   2. team.yaml `skilltree:` extension per-role override (replaces step 1)
+ *   3. openteams `role.loadout.skills` overlay via mergeOpenteamsSkillsIntoCriteria
+ *      (this is the openteams ↔ skill-tree bridge — declarations dispatch
+ *      into the mechanism)
+ *   4. If no skill-bearing criteria exists yet:
+ *      a. config.defaultProfile, else
+ *      b. ROLE_PROFILE_MAP auto-inference from role name, else
+ *      c. return null (no criteria — caller skips this role)
+ *
+ * @param {string} roleName
+ * @param {object} manifest - Parsed team.yaml manifest
+ * @param {object} [config] - Plugin config (skilltree section)
+ * @param {object} [template] - Optional openteams ResolvedTemplate
+ * @returns {object|null} LoadoutCriteria or null when role has no criteria
+ */
+export function computeRoleCriteria(
+  roleName,
+  manifest,
+  config = {},
+  template = null,
+) {
+  const { defaults, roles: roleOverrides } = parseSkillTreeExtension(manifest);
+  const templateRoles = normalizeRolesMap(template?.roles);
+
+  // Step 1+2: skilltree extension defaults + per-role override
+  let roleCriteria = roleOverrides[roleName]
+    ? { ...defaults, ...roleOverrides[roleName] }
+    : { ...defaults };
+
+  // Step 3: openteams loadout.skills overlay (canonical bridge — openteams wins)
+  const loadoutSkills = templateRoles?.get(roleName)?.loadout?.skills;
+  roleCriteria = mergeOpenteamsSkillsIntoCriteria(roleCriteria, loadoutSkills);
+
+  // Step 4: fallback chain — only fires when nothing skill-bearing is set yet
+  if (
+    !roleCriteria.profile &&
+    !roleCriteria.tags &&
+    !roleCriteria.include &&
+    !roleCriteria.taskDescription
+  ) {
+    if (config?.defaultProfile) {
+      roleCriteria.profile = config.defaultProfile;
+    } else {
+      const inferred = inferProfileFromRole(roleName);
+      if (inferred) {
+        roleCriteria.profile = inferred;
+      } else {
+        return null;
+      }
+    }
+  }
+
+  return roleCriteria;
+}
+
+/**
+ * Compile skill loadouts for all roles in a team manifest. Thin
+ * orchestrator over `computeRoleCriteria` + `compileRoleLoadout`.
  *
  * @param {object} manifest - Parsed team.yaml manifest
  * @param {object} config - Plugin config (skilltree section)
- * @param {object} [template] - Optional openteams ResolvedTemplate.
- *                              When supplied, `role.loadout.skills` wins
- *                              over `skilltree:` extension values.
+ * @param {object} [template] - Optional openteams ResolvedTemplate
  * @returns {Promise<object>} Map of roleName → { content, profile }
  */
 export async function compileAllRoleLoadouts(manifest, config, template = null) {
-  const { defaults, roles: roleOverrides } = parseSkillTreeExtension(manifest);
   const allRoles = manifest.roles || [];
   const result = {};
 
-  // Normalize template.roles into a lookup (supports Map or plain object)
-  const templateRoles = normalizeRolesMap(template?.roles);
-
   for (const roleName of allRoles) {
-    // Step 1: start with skilltree extension criteria (defaults + per-role override)
-    let roleCriteria = roleOverrides[roleName]
-      ? { ...defaults, ...roleOverrides[roleName] }
-      : { ...defaults };
-
-    // Step 2: if openteams role.loadout.skills is present, overlay it
-    // (loadout is the newer, first-class primitive — it wins).
-    const loadoutSkills = templateRoles?.get(roleName)?.loadout?.skills;
-    if (loadoutSkills) {
-      if (loadoutSkills.profile) roleCriteria.profile = loadoutSkills.profile;
-      if (loadoutSkills.include?.length) {
-        roleCriteria.include = mergeUnique(roleCriteria.include, loadoutSkills.include);
-      }
-      if (loadoutSkills.exclude?.length) {
-        roleCriteria.exclude = mergeUnique(roleCriteria.exclude, loadoutSkills.exclude);
-      }
-      if (typeof loadoutSkills.max_tokens === "number") {
-        roleCriteria.maxTokens = loadoutSkills.max_tokens;
-      }
-    }
-
-    // Step 3: fallback chain for profile selection (unchanged)
-    if (
-      !roleCriteria.profile &&
-      !roleCriteria.tags &&
-      !roleCriteria.include &&
-      !roleCriteria.taskDescription
-    ) {
-      if (config?.defaultProfile) {
-        roleCriteria.profile = config.defaultProfile;
-      } else {
-        const inferred = inferProfileFromRole(roleName);
-        if (inferred) {
-          roleCriteria.profile = inferred;
-        } else {
-          continue; // No criteria at all — skip
-        }
-      }
-    }
+    const roleCriteria = computeRoleCriteria(roleName, manifest, config, template);
+    if (!roleCriteria) continue;
 
     const loadout = await compileRoleLoadout(roleName, roleCriteria, config);
     if (loadout) {

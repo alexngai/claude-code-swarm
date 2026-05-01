@@ -1,0 +1,4 @@
+name: reviewer
+display_name: Reviewer
+description: "Code reviewer role bound to the base-reviewer loadout."
+loadout: base-reviewer

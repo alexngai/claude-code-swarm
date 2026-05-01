@@ -1,0 +1,10 @@
+name: inline-extender
+display_name: Inline Extender
+description: "Role with an inline loadout that extends the named base-reviewer. Tests inline-extends resolution through compile."
+loadout:
+  extends: base-reviewer
+  capabilities_add:
+    - exec.run
+  prompt_addendum: |
+    ## Inline Mindset
+    Inherit base-reviewer; add execution capability.

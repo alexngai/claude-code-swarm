@@ -1,0 +1,16 @@
+name: base-reviewer
+description: "Baseline reviewer loadout. Uses skill-tree's built-in code-review profile so the e2e test exercises the profile-resolution path."
+skills:
+  profile: code-review
+  max_tokens: 30000
+capabilities:
+  - file.read
+  - codebase.search
+permissions:
+  allow:
+    - "Read(**)"
+  deny:
+    - "Bash(git push:*)"
+prompt_addendum: |
+  ## Review Mindset
+  Cite line numbers; suggest, don't command.

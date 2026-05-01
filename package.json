@@ -56,7 +56,7 @@
     "agent-inbox": "^0.1.9",
     "minimem": "^0.1.1",
     "opentasks": "^0.1.2",
-    "skill-tree": "^0.1.5",
+    "skill-tree": "^0.2.0",
     "vitest": "^4.0.18",
     "ws": "^8.0.0"
   }

@@ -1,0 +1,10 @@
+name: extended-security
+description: "Security-focused extension of base-reviewer. Demonstrates extends: chain — child replaces skills.profile, inherits max_tokens + capabilities."
+extends: base-reviewer
+skills:
+  profile: security
+capabilities_add:
+  - exec.test
+permissions:
+  allow:
+    - "Bash(grep:*)"

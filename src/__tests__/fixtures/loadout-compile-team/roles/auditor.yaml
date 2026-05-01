@@ -1,0 +1,4 @@
+name: auditor
+display_name: Auditor
+description: "Security auditor role bound to the extended-security loadout (extends base-reviewer)."
+loadout: extended-security

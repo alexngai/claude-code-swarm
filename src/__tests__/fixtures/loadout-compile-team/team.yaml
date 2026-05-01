@@ -1,0 +1,15 @@
+name: loadout-compile-test
+description: "Fixture team for loadout-compile e2e tests. Roles bind to named loadouts that use built-in skill-tree profiles."
+version: 1
+roles:
+  - reviewer
+  - auditor
+  - inline-extender
+
+topology:
+  root:
+    role: reviewer
+  spawn_rules:
+    reviewer: [auditor, inline-extender]
+    auditor: []
+    inline-extender: []
