@@ -63,12 +63,18 @@ export async function emitPayload(config, payload, meta, sessionId) {
 
 /**
  * Build a "spawn" sidecar command for a subagent.
+ *
+ * The agentId is derived from hookData.agent_id when available (stable,
+ * set by the spawning agent) or falls back to a timestamp-based ID.
+ * `inboxAgentId` is included in metadata so the hub can correlate MAP
+ * and inbox identities.
  */
 export function buildSubagentSpawnCommand(hookData, teamName) {
+  const agentId = hookData.agent_id || `${teamName}-subagent-${Date.now()}`;
   return {
     action: "spawn",
     agent: {
-      agentId: hookData.agent_id || `${teamName}-subagent-${Date.now()}`,
+      agentId,
       name: hookData.agent_type || "subagent",
       role: "subagent",
       scopes: [`swarm:${teamName}`],
@@ -76,6 +82,7 @@ export function buildSubagentSpawnCommand(hookData, teamName) {
         agentType: hookData.agent_type || "",
         sessionId: hookData.session_id || "",
         isTeamRole: false,
+        inboxAgentId: agentId,
       },
     },
   };

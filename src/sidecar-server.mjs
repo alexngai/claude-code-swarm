@@ -99,6 +99,11 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
   const { inboxInstance, meshPeer, transportMode = "websocket" } = opts;
   const useMeshRegistry = transportMode === "mesh" && inboxInstance;
 
+  // Dispatch thread nudge state — set by x-dispatch/nudge notifications,
+  // consumed by the UserPromptSubmit hook via the check-nudge command.
+  // Keyed by dispatch_id → { conversation_id, received_at }.
+  const _pendingNudges = new Map();
+
   // Connection-ready gate: commands that need `conn` await this promise.
   // If connection is already available, resolves immediately.
   // When connection arrives later (via setConnection), resolves the pending promise.
@@ -471,6 +476,37 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
 
         case "ping": {
           respond(client, { ok: true, pid: process.pid, transport: transportMode });
+          break;
+        }
+
+        // --- Dispatch thread nudge ---
+        // Set by x-dispatch/nudge MAP notifications, consumed by hooks.
+
+        case "nudge": {
+          // Called internally when the notification handler fires.
+          const { dispatch_id, conversation_id } = command;
+          if (dispatch_id) {
+            _pendingNudges.set(dispatch_id, {
+              conversation_id,
+              received_at: Date.now(),
+            });
+          }
+          respond(client, { ok: true });
+          break;
+        }
+
+        case "check-nudge": {
+          // Called by UserPromptSubmit hook. Returns and clears all
+          // pending nudges so the hook can inject a hint.
+          const nudges = [];
+          for (const [dispatchId, info] of _pendingNudges) {
+            nudges.push({
+              dispatch_id: dispatchId,
+              conversation_id: info.conversation_id,
+            });
+          }
+          _pendingNudges.clear();
+          respond(client, { ok: true, nudges });
           break;
         }
 
