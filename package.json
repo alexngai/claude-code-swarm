@@ -51,6 +51,7 @@
     "test:e2e:tier4": "vitest run --config e2e/vitest.config.e2e.mjs -t tier4",
     "test:e2e:tier5": "vitest run --config e2e/vitest.config.e2e.mjs -t tier5",
     "test:e2e:tier7": "vitest run --config e2e/vitest.config.e2e.mjs -t tier7",
+    "prepublishOnly": "publint",
     "version:patch": "npm version patch --no-git-tag-version && node scripts/sync-version.mjs",
     "version:minor": "npm version minor --no-git-tag-version && node scripts/sync-version.mjs",
     "version:major": "npm version major --no-git-tag-version && node scripts/sync-version.mjs"
@@ -62,6 +63,7 @@
     "agent-inbox": "^0.2.3",
     "minimem": "^0.1.1",
     "opentasks": "^0.1.2",
+    "publint": "^0.3.21",
     "skill-tree": "^0.2.0",
     "vitest": "^4.0.18",
     "ws": "^8.0.0"
