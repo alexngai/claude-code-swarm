@@ -425,6 +425,34 @@ function registerContentHandler(conn) {
   });
 }
 
+/**
+ * Register the x-dispatch/nudge notification handler on a connection.
+ * When the hub sends a nudge (a dispatch thread received a new turn),
+ * the sidecar stores the nudge so the UserPromptSubmit hook can inject
+ * a hint about pending messages.
+ */
+function registerNudgeHandler(conn) {
+  if (!conn || typeof conn.onNotification !== "function") return;
+
+  conn.onNotification("x-dispatch/nudge", (params) => {
+    const dispatchId = params?.dispatch_id;
+    const conversationId = params?.conversation_id;
+    if (!dispatchId) return;
+
+    log.info("dispatch nudge received", { dispatchId, conversationId });
+    resetInactivityTimer();
+
+    // Store the nudge via the command handler's nudge command.
+    // Use a fake client since we don't need the response.
+    if (commandHandler) {
+      commandHandler(
+        { action: "nudge", dispatch_id: dispatchId, conversation_id: conversationId },
+        { write: () => {}, writable: true },
+      );
+    }
+  });
+}
+
 async function startWebSocketTransport() {
   connection = await connectToMAP({
     server: MAP_SERVER,
@@ -556,6 +584,10 @@ async function main() {
     resetInactivityTimer();
     return commandHandler(command, client);
   });
+
+  // Register dispatch nudge handler — must come after commandHandler is created
+  // so the notification can store nudge state via the command handler.
+  registerNudgeHandler(connection);
 
   // Start memory file watcher if minimem is enabled
   const sidecarConfig = readConfig();

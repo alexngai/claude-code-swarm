@@ -1,6 +1,6 @@
 {
   "name": "claude-code-swarm",
-  "version": "0.3.25",
+  "version": "0.3.26",
   "description": "Claude Code plugin for launching agent teams from openteams topologies with MAP observability",
   "author": "Alex Ngai",
   "license": "MIT",
@@ -59,7 +59,7 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "agent-inbox": "^0.1.9",
+    "agent-inbox": "^0.2.3",
     "minimem": "^0.1.1",
     "opentasks": "^0.1.2",
     "skill-tree": "^0.2.0",

@@ -244,16 +244,22 @@ async function startSessionSidecar(config, scope, dir, sessionId) {
 
   const ok = await startSidecar(config, dir, sessionId);
   if (ok) {
-    // Register the main Claude Code session agent with the MAP server
+    // Register the main Claude Code session agent with the MAP server.
+    // Use the inbox-derived ID (`${teamName}-main`) as the canonical agentId
+    // so MAP and inbox identities are unified — the hub can correlate a MAP
+    // agent with its inbox participant without a separate lookup table.
+    // The ephemeral sessionId is preserved in metadata for trajectory
+    // correlation and session storage.
     const teamName = resolveTeamName(config);
+    const inboxAgentId = `${teamName}-main`;
     sendCommand(config, {
       action: "spawn",
       agent: {
-        agentId: sessionId,
-        name: `${teamName}-main`,
+        agentId: inboxAgentId,
+        name: inboxAgentId,
         role: "orchestrator",
         scopes: [scope],
-        metadata: { isMain: true, sessionId },
+        metadata: { isMain: true, sessionId, inboxAgentId },
       },
     }, sessionId).catch(() => {});
 
@@ -307,9 +313,11 @@ export async function backgroundInit(config, scope, dir, sessionId) {
       }
     }
 
-    // Inbox registration
+    // Inbox registration — uses the same stable ID as the MAP registration
+    // above so both systems share a single canonical agent identity.
     if (config.map.enabled && config.inbox?.enabled) {
-      const teamName = resolveTeamName(config);
+      const inboxTeamName = resolveTeamName(config);
+      const inboxId = `${inboxTeamName}-main`;
       const sPaths = sessionId
         ? (await import("./paths.mjs")).sessionPaths(sessionId)
         : { inboxSocketPath: (await import("./paths.mjs")).INBOX_SOCKET_PATH };
@@ -319,11 +327,11 @@ export async function backgroundInit(config, scope, dir, sessionId) {
           event: {
             type: "agent.spawn",
             agent: {
-              agentId: `${teamName}-main`,
-              name: `${teamName}-main`,
+              agentId: inboxId,
+              name: inboxId,
               role: "orchestrator",
               scopes: [scope],
-              metadata: { isMain: true, sessionId },
+              metadata: { isMain: true, sessionId, inboxAgentId: inboxId },
             },
           },
         }, sPaths.inboxSocketPath).catch(() => {})

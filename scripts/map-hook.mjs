@@ -77,7 +77,29 @@ async function handleInject(hookData, sessionId) {
   const sPaths = sessionPaths(sessionId);
   const config = readConfig();
 
-  if (!config.inbox?.enabled) return;
+  // Check for dispatch thread nudges (advisory push from hub).
+  // Nudges arrive via x-dispatch/nudge MAP notifications; the sidecar
+  // stores them until this hook drains them. We check nudges even when
+  // inbox is disabled — the nudge path is independent.
+  // Uses sendToInbox (which waits for a response) on the sidecar socket.
+  let nudgeOutput = "";
+  try {
+    const nudgeResp = await sendToInbox(
+      { action: "check-nudge" },
+      sPaths.socketPath,
+    );
+    if (nudgeResp && nudgeResp.ok && nudgeResp.nudges?.length > 0) {
+      const ids = nudgeResp.nudges.map((n) => n.dispatch_id).join(", ");
+      nudgeOutput = `\n<dispatch-thread-nudge>\nYou have pending messages in dispatch coordination thread(s): ${ids}. Check your inbox for new turns.\n</dispatch-thread-nudge>\n`;
+    }
+  } catch {
+    // Best effort — nudge is advisory
+  }
+
+  if (!config.inbox?.enabled) {
+    if (nudgeOutput) process.stdout.write(nudgeOutput);
+    return;
+  }
 
   // Only check messages addressed to the main agent (not all scope messages).
   // Per-agent messages stay in storage for agents to pull via MCP tools.
@@ -89,10 +111,9 @@ async function handleInject(hookData, sessionId) {
     { action: "check_inbox", agentId: mainAgentId, scope, unreadOnly: true, clear: true },
     sPaths.inboxSocketPath
   );
-  if (!resp || !resp.ok || !resp.messages?.length) return;
 
   // Forward task.* events to opentasks graph if enabled
-  if (config.opentasks?.enabled) {
+  if (resp?.ok && resp.messages?.length && config.opentasks?.enabled) {
     const otSocketPath = findSocketPath();
     const taskEvents = resp.messages.filter(
       (m) => m.content?.type === "event" && m.content?.event?.startsWith("task.")
@@ -102,8 +123,12 @@ async function handleInject(hookData, sessionId) {
     }
   }
 
-  const output = formatInboxAsMarkdown(resp.messages);
-  if (output) process.stdout.write(output);
+  const inboxOutput = resp?.ok && resp.messages?.length
+    ? formatInboxAsMarkdown(resp.messages)
+    : "";
+
+  const output = (nudgeOutput + (inboxOutput || "")).trim();
+  if (output) process.stdout.write(output + "\n");
 }
 
 async function handleTurnCompleted(hookData, sessionId) {
