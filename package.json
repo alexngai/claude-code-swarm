@@ -2,6 +2,12 @@
   "name": "claude-code-swarm",
   "version": "0.3.25",
   "description": "Claude Code plugin for launching agent teams from openteams topologies with MAP observability",
+  "author": "Alex Ngai",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexngai/claude-code-swarm.git"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.mjs",
