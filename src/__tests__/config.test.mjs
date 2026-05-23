@@ -78,6 +78,21 @@ describe("config", () => {
       expect(config.opentasks.autoStart).toBe(false);
     });
 
+    it("normalizes cascade fields with defaults (disabled)", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({ template: "test" }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.cascade.enabled).toBe(false);
+    });
+
+    it("reads cascade.enabled from config file", () => {
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        template: "test",
+        cascade: { enabled: true },
+      }));
+      const config = readConfig(configPath, noGlobal);
+      expect(config.cascade.enabled).toBe(true);
+    });
+
     it("returns defaults when file does not exist", () => {
       const config = readConfig(path.join(tmpDir, "nonexistent.json"), noGlobal);
       expect(config.template).toBe("");
@@ -399,6 +414,14 @@ describe("config", () => {
       process.env.SWARM_OPENTASKS_AUTOSTART = "false";
       const configPath = writeFile(tmpDir, "config.json", JSON.stringify({}));
       expect(readConfig(configPath, noGlobal).opentasks.autoStart).toBe(false);
+    });
+
+    it("SWARM_CASCADE_ENABLED overrides config file", () => {
+      process.env.SWARM_CASCADE_ENABLED = "true";
+      const configPath = writeFile(tmpDir, "config.json", JSON.stringify({
+        cascade: { enabled: false },
+      }));
+      expect(readConfig(configPath, noGlobal).cascade.enabled).toBe(true);
     });
 
     it("env vars override defaults when no config file exists", () => {

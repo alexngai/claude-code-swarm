@@ -20,13 +20,17 @@
 
 import fs from "fs";
 import path from "path";
-import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, sessionPaths, pluginDir } from "../src/paths.mjs";
+import { SOCKET_PATH, PID_PATH, INBOX_SOCKET_PATH, CASCADE_DB_PATH, sessionPaths, pluginDir, ensureCascadeDir } from "../src/paths.mjs";
 import { connectToMAP } from "../src/map-connection.mjs";
 import { createMeshPeer, createMeshInbox } from "../src/mesh-connection.mjs";
 import { createSocketServer, createCommandHandler } from "../src/sidecar-server.mjs";
 import { startOpenTasksEventBridge } from "../src/opentasks-bridge.mjs";
 import { createContentProvider } from "../src/content-provider.mjs";
 import { startMemoryWatcher } from "../src/memory-watcher.mjs";
+import { openCascadeTracker, ensureStream, closeCascadeTracker } from "../src/cascade-client.mjs";
+import { buildStreamOpenedParams, emitStreamOpened } from "../src/cascade-events.mjs";
+import { startCascadeWatcher } from "../src/cascade-watcher.mjs";
+import { setupCascadeDiffServer } from "../src/cascade-diff-server.mjs";
 import { readConfig } from "../src/config.mjs";
 import { createLogger, init as initLog } from "../src/log.mjs";
 import { configureNodePath, resolvePackage } from "../src/swarmkit-resolver.mjs";
@@ -98,6 +102,16 @@ initLog({ ..._logConfig, sessionId: SESSION_ID || undefined });
 const MESH_ENABLED = hasFlag("mesh-enabled");
 const MESH_PEER_ID = getArg("mesh-peer-id", "");
 
+// Cascade gate — whether git-cascade integration is enabled. Used to declare
+// the `cascade.canServeDiff` MAP capability conditionally: the diff server
+// (src/cascade-diff-server.mjs) is wired in setupCascade() only when this is
+// true, so declaring the capability without it would invite timed-out
+// cascade/diff.request notifications from the hub.
+let CASCADE_ENABLED = false;
+try {
+  CASCADE_ENABLED = Boolean(readConfig().cascade?.enabled);
+} catch { /* config unreadable — leave cascade off */ }
+
 // Parse inbox config (passed as JSON blob from sidecar-client)
 let INBOX_CONFIG = null;
 const inboxConfigJson = getArg("inbox-config", "");
@@ -125,6 +139,9 @@ let inactivityTimer = null;
 let reconnectInterval = null;
 let transportMode = "websocket"; // "mesh" or "websocket"
 let opentasksBridge = null; // Daemon watch → MAP event bridge (Option A)
+let cascadeTracker = null; // git-cascade local-mode tracker (Phase 1+)
+let cascadeWatcher = null; // observed-git ref watcher (Phase 2)
+let cascadeDiffServerDispose = null; // cascade/diff.request handler cleanup (Phase 3)
 const registeredAgents = new Map();
 
 // ── Inactivity Timer ────────────────────────────────────────────────────────
@@ -150,6 +167,27 @@ async function shutdown() {
   if (opentasksBridge) {
     try { await opentasksBridge.stop(); } catch { /* ignore */ }
     opentasksBridge = null;
+  }
+
+  // Stop the cascade ref watcher before the tracker DB closes — the watcher
+  // calls into the tracker. Safe no-op when cascade was never enabled.
+  if (cascadeWatcher) {
+    try { cascadeWatcher.stop(); } catch { /* ignore */ }
+    cascadeWatcher = null;
+  }
+
+  // Dispose the cascade diff server (unregisters the cascade/diff.request
+  // handler). Safe no-op when cascade was never enabled.
+  if (cascadeDiffServerDispose) {
+    try { cascadeDiffServerDispose(); } catch { /* ignore */ }
+    cascadeDiffServerDispose = null;
+  }
+
+  // Close the git-cascade tracker (local state store) before the socket
+  // and connection drop. Safe no-op when cascade was never enabled.
+  if (cascadeTracker) {
+    closeCascadeTracker(cascadeTracker);
+    cascadeTracker = null;
   }
 
   // Stop agent-inbox first (it borrows the connection/peer, doesn't own it)
@@ -234,6 +272,7 @@ function startSlowReconnectLoop() {
         credential: AUTH_CREDENTIAL || undefined,
         projectContext: PROJECT_CONTEXT,
         inboxEnabled: !!INBOX_CONFIG || MESH_ENABLED,
+        cascadeEnabled: CASCADE_ENABLED,
         onMessage: () => resetInactivityTimer(),
       });
 
@@ -244,6 +283,28 @@ function startSlowReconnectLoop() {
         connection = newConn;
         if (commandHandler) commandHandler.setConnection(newConn);
         attachReconnectionListener(newConn);
+
+        // Point the cascade watcher at the fresh connection and re-assert
+        // open streams — idempotent on the hub, covers the reconnect gap.
+        if (cascadeWatcher) {
+          try {
+            cascadeWatcher.setConnection(newConn);
+            cascadeWatcher.reassertStreams();
+          } catch { /* ignore — cascade must never crash the sidecar */ }
+        }
+
+        // Re-register the cascade diff server on the fresh connection — the
+        // previous handler was bound to the dead one. No-op when cascade is
+        // disabled (dispose handle is null).
+        if (cascadeDiffServerDispose) {
+          try {
+            cascadeDiffServerDispose();
+            cascadeDiffServerDispose = setupCascadeDiffServer(newConn, {
+              repoPath: process.cwd(),
+              tracker: cascadeTracker,
+            });
+          } catch { /* ignore — cascade must never crash the sidecar */ }
+        }
 
         // Re-register active agents so the MAP server knows about them
         await reRegisterAgents(newConn);
@@ -461,6 +522,7 @@ async function startWebSocketTransport() {
     credential: AUTH_CREDENTIAL || undefined,
     projectContext: PROJECT_CONTEXT,
     inboxEnabled: !!INBOX_CONFIG || MESH_ENABLED,
+    cascadeEnabled: CASCADE_ENABLED,
     onMessage: () => {
       resetInactivityTimer();
     },
@@ -539,6 +601,116 @@ async function startLegacyAgentInbox(mapConnection) {
   }
 }
 
+// ── Cascade (git-cascade local-mode tracking) ───────────────────────────────
+
+/**
+ * Determine the current branch and its HEAD commit for `repoPath`.
+ * Returns null for either field on any git error.
+ */
+function getRepoHead(repoPath) {
+  let branch = null;
+  let commit = null;
+  try {
+    branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: repoPath, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch { /* not a git repo / detached */ }
+  try {
+    commit = execSync("git rev-parse HEAD", {
+      cwd: repoPath, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch { /* no commits yet */ }
+  return { branch, commit };
+}
+
+/**
+ * Cascade setup: open a git-cascade tracker in local mode, register the
+ * working branch as a local-mode stream, emit one `x-cascade/stream.opened`
+ * event, and start the Phase 2 observed-git ref watcher.
+ *
+ * Stores the tracker on `cascadeTracker` and the watcher on `cascadeWatcher`.
+ * Fully resilient — any failure is logged and swallowed so cascade can never
+ * crash the sidecar.
+ */
+async function setupCascade() {
+  try {
+    const cfg = readConfig();
+    if (!cfg.cascade?.enabled) return;
+
+    const repoPath = process.cwd();
+    const { branch, commit } = getRepoHead(repoPath);
+    if (!branch || branch === "HEAD") {
+      log.warn("cascade: no current branch, skipping stream registration");
+      return;
+    }
+
+    ensureCascadeDir();
+    cascadeTracker = await openCascadeTracker({ repoPath, dbPath: CASCADE_DB_PATH });
+    if (!cascadeTracker) return; // openCascadeTracker already logged the reason
+
+    // First-emit settle window. AgentConnection.connect() resolves once the
+    // SDK handshake completes, but the hub-side session-context attach (which
+    // stamps the swarmId on inbound messages) can land a beat later. The live
+    // e2e (src/__tests__/cascade/live-cc-swarm-cascade-e2e.test.ts) surfaced
+    // that a callExtension fired immediately after connect can race the
+    // inbound register and be silently dropped. Give the hub a small window
+    // to settle before the first cascade emit. The watcher's
+    // reassertStreams() (run on watcher start and on every reconnect) is the
+    // belt-and-suspenders recovery; this settle is the cheaper first line of
+    // defense. Replace with a proper readiness signal if the MAP SDK ever
+    // exposes one.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const teamName = MAP_SCOPE.replace("swarm:", "");
+    const agentId = `${teamName}-sidecar`;
+
+    const result = ensureStream(cascadeTracker, { branch, agentId });
+    if (!result) return;
+
+    if (result.created) {
+      log.info("cascade: registered working branch as stream", { branch, streamId: result.streamId });
+      const params = buildStreamOpenedParams({
+        streamId: result.streamId,
+        name: branch,
+        agentId,
+        baseCommit: commit || "",
+        branchName: branch,
+        metadata: { trigger: "sidecar-boot" },
+      });
+      emitStreamOpened(connection, params);
+    } else {
+      log.debug("cascade: working branch already tracked", { branch, streamId: result.streamId });
+    }
+
+    // Phase 2: start the observed-git ref watcher. It detects commits/merges/
+    // pushes from git ref state and emits x-cascade/* events with real git
+    // data. Attribution (agent_id, task_ref) comes from the PostToolUse(Bash)
+    // hook via the command handler's cascade-attribution side-channel.
+    cascadeWatcher = startCascadeWatcher({
+      tracker: cascadeTracker,
+      connection,
+      repoPath,
+      getAttribution: commandHandler?.getCascadeAttribution,
+      agentId,
+    });
+
+    // Phase 3: wire the cascade diff server. It registers a
+    // cascade/diff.request handler so the hub can fetch unified diffs for
+    // cc-swarm-tracked streams on demand. Resilient — try/catch keeps a
+    // cascade failure from ever crashing the sidecar.
+    try {
+      cascadeDiffServerDispose = setupCascadeDiffServer(connection, {
+        repoPath,
+        tracker: cascadeTracker,
+      });
+    } catch (err) {
+      log.warn("cascade diff server setup failed", { error: err.message });
+    }
+  } catch (err) {
+    log.warn("cascade setup failed", { error: err.message });
+  }
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -612,6 +784,11 @@ async function main() {
       process.on("SIGTERM", () => memWatcher.close());
     }
   }
+
+  // Cascade Phase 1: register the working branch as a local-mode
+  // git-cascade stream and emit x-cascade/stream.opened. No-op unless
+  // cascade.enabled. Resilient — never crashes the sidecar.
+  await setupCascade();
 
   // Start inactivity timer
   resetInactivityTimer();

@@ -105,6 +105,13 @@ export function readConfig(configPath = CONFIG_PATH, globalConfigPath = GLOBAL_C
         trust: project.inbox?.federation?.trust ?? global.inbox?.federation?.trust ?? undefined,
       },
     },
+    // Cascade integration. Only meaningful when `map` is enabled — the
+    // sidecar emits x-cascade/* notifications over the MAP connection.
+    // When map is disabled there is no connection to emit on, so cascade
+    // becomes an inert no-op (no hard failure — mirrors opentasks/minimem).
+    cascade: {
+      enabled: envBool("SWARM_CASCADE_ENABLED") ?? Boolean(project.cascade?.enabled ?? global.cascade?.enabled),
+    },
     minimem: {
       enabled: envBool("SWARM_MINIMEM_ENABLED") ?? Boolean(project.minimem?.enabled ?? global.minimem?.enabled),
       provider: envStr("SWARM_MINIMEM_PROVIDER") ?? project.minimem?.provider ?? global.minimem?.provider ?? "auto",

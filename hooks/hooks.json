@@ -81,6 +81,15 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const f=require('fs'),p=require('path'),h=require('os').homedir();let c={};try{c=JSON.parse(f.readFileSync('.swarm/claude-swarm/config.json','utf-8'))}catch{try{c=JSON.parse(f.readFileSync(p.join(h,'.claude-swarm','config.json'),'utf-8'))}catch{}};process.exit((c.cascade?.enabled||process.env.SWARM_CASCADE_ENABLED)&&(c.map?.enabled||c.map?.server||process.env.SWARM_MAP_SERVER||process.env.SWARM_MAP_ENABLED)?0:1)\" 2>/dev/null && node \"${CLAUDE_PLUGIN_ROOT}/scripts/map-hook.mjs\" cascade-bash-attribution"
+          }
+        ]
+      },
+      {
         "matcher": "TaskCreate",
         "hooks": [
           {

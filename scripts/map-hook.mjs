@@ -20,6 +20,7 @@
  *   task-completed      — Complete task in opentasks + emit bridge event
  *   opentasks-mcp-used  — Bridge opentasks MCP tool use → MAP task sync payload
  *   sessionlog-dispatch — Dispatch a sessionlog lifecycle hook via programmatic API
+ *   cascade-bash-attribution — Push a cascade attribution hint to the sidecar
  *
  * Usage: node map-hook.mjs <action>
  *        Hook event data is read from stdin (JSON).
@@ -36,7 +37,7 @@ configureNodePath();
 const log = createLogger("map-hook");
 import { readRoles, matchRole } from "../src/roles.mjs";
 import { formatInboxAsMarkdown } from "../src/inbox.mjs";
-import { sendToInbox } from "../src/sidecar-client.mjs";
+import { sendToInbox, sendToSidecar } from "../src/sidecar-client.mjs";
 import { sessionPaths } from "../src/paths.mjs";
 import {
   sendCommand,
@@ -51,7 +52,7 @@ import {
   buildMinimemBridgeCommand,
 } from "../src/map-events.mjs";
 import { syncSessionlog, dispatchSessionlogHook } from "../src/sessionlog.mjs";
-import { findSocketPath, pushSyncEvent } from "../src/opentasks-client.mjs";
+import { findSocketPath, pushSyncEvent, rpcRequest } from "../src/opentasks-client.mjs";
 
 const action = process.argv[2];
 
@@ -232,6 +233,60 @@ async function handleMinimemMcpUsed(hookData, sessionId) {
   }
 }
 
+// ── cascade attribution (PostToolUse Bash) ──────────────────────────────────
+//
+// Attribution-only: this does NOT parse the git command or detect git. The
+// cascade-watcher in the sidecar is the detector. This hook just builds an
+// attribution hint { agentId, taskRef, ts } and pushes it to the sidecar as a
+// `cascade-attribution` command — the watcher reads the freshest hint to
+// stamp agent_id / task_ref on observed-git events.
+
+async function handleCascadeBashAttribution(hookData, sessionId) {
+  const config = readConfig();
+  if (!config.cascade?.enabled || !config.map?.enabled) return;
+
+  // Acting agent id — same resolution other hooks use: hook data first,
+  // then env. Falls back to the session id when nothing else identifies it.
+  const agentId =
+    hookData.agent_id ||
+    process.env.CLAUDE_AGENT_ID ||
+    process.env.MACRO_AGENT_ID ||
+    sessionId ||
+    "";
+
+  // taskRef — only correlated when opentasks is enabled. When opentasks is
+  // disabled we skip the query entirely and leave taskRef null; no task
+  // correlation is expected without opentasks (intended).
+  let taskRef = null;
+  if (config.opentasks?.enabled && agentId) {
+    try {
+      const otSocketPath = findSocketPath();
+      const nodes = await rpcRequest(
+        "graph.query",
+        { type: "task", filter: { status: "in_progress", assignee: agentId } },
+        otSocketPath,
+      );
+      const task = Array.isArray(nodes) ? nodes[0] : null;
+      if (task) {
+        // resource_id intentionally omitted — the hub resolves it from the
+        // swarm's registered task graph. Emitting a guessed value causes false
+        // bindings.
+        taskRef = {
+          node_id: task.node_id || task.id || "",
+        };
+      }
+    } catch {
+      // Best-effort — leave taskRef null on any failure.
+    }
+  }
+
+  const sPaths = sessionPaths(sessionId);
+  await sendToSidecar(
+    { action: "cascade-attribution", agentId, taskRef, ts: Date.now() },
+    sPaths.socketPath,
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -253,6 +308,7 @@ async function main() {
       case "native-task-created": await handleNativeTaskCreated(hookData, sessionId); break;
       case "native-task-updated": await handleNativeTaskUpdated(hookData, sessionId); break;
       case "minimem-mcp-used": await handleMinimemMcpUsed(hookData, sessionId); break;
+      case "cascade-bash-attribution": await handleCascadeBashAttribution(hookData, sessionId); break;
       case "sessionlog-dispatch": await handleSessionlogDispatch(hookData); break;
       default:
         log.warn("unknown action", { action });

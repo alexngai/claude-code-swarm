@@ -70,6 +70,9 @@ function getRequiredGlobalPackages(config) {
   if (config.mesh?.enabled) {
     packages.push("agentic-mesh");
   }
+  if (config.cascade?.enabled) {
+    packages.push("git-cascade"); // requires >= ^0.0.7 (local-mode streams + x-cascade events)
+  }
   return packages;
 }
 

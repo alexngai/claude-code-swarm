@@ -2,3 +2,4 @@ node_modules/
 agents/
 e2e/logs/
 .swarm/
+.omc/

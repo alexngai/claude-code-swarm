@@ -24,7 +24,7 @@ const log = createLogger("map");
  *   authRequired challenge with the server's preferred method + this credential.
  *   When absent, uses the standard SDK connect() for open mode servers.
  */
-export async function connectToMAP({ server, scope, systemId, onMessage, credential, projectContext, inboxEnabled }) {
+export async function connectToMAP({ server, scope, systemId, onMessage, credential, projectContext, inboxEnabled, cascadeEnabled }) {
   try {
     const mapSdk = await resolvePackage("@multi-agent-protocol/sdk");
     if (!mapSdk) throw new Error("@multi-agent-protocol/sdk not available");
@@ -48,6 +48,23 @@ export async function connectToMAP({ server, scope, systemId, onMessage, credent
         tasks: { canCreate: true, canAssign: true, canUpdate: true, canList: true },
         ...(projectContext?.task_graph ? {
           opentasks: { canQuery: true, canLink: true, canAnnotate: true, canTask: true },
+        } : {}),
+        // Cascade capability (CascadeCapability, git-cascade >= 0.0.8) — gated
+        // on cascade.enabled. cc-swarm runs cascade in "observed git" mode: it
+        // watches git state and serves diffs. It now also probes in-progress
+        // *merge* conflict state on every poll tick and emits
+        // `x-cascade/stream.conflicted` / `stream.conflict_resolved` on the
+        // transitions — so `emitsConflicts: true` ships honestly. Action-layer
+        // remains observe-only (`canAct: false`); the watcher does not drive
+        // merges / rebases / pauses.
+        //   canServeDiff: true   — the diff server (src/cascade-diff-server.mjs) is wired
+        //   canAct: false        — no cascade action handler
+        //   emitsConflicts: true — the watcher observes merge-conflict transitions
+        // TODO: rebase-conflict observation (`.git/rebase-merge/`,
+        // `.git/rebase-apply/`) is a known follow-up. v1 covers `git merge`
+        // conflicts only.
+        ...(cascadeEnabled ? {
+          cascade: { canServeDiff: true, canAct: false, emitsConflicts: true },
         } : {}),
       },
       metadata: {

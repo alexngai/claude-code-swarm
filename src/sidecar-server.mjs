@@ -104,6 +104,12 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
   // Keyed by dispatch_id → { conversation_id, received_at }.
   const _pendingNudges = new Map();
 
+  // Cascade attribution hint — the single most-recent { agentId, taskRef, ts }
+  // sent by the PostToolUse(Bash) hook via the cascade-attribution command.
+  // The cascade-watcher reads this (via getCascadeAttribution) to stamp
+  // agent_id / task_ref on observed-git events when the hint is fresh.
+  let _cascadeAttribution = null;
+
   // Connection-ready gate: commands that need `conn` await this promise.
   // If connection is already available, resolves immediately.
   // When connection arrives later (via setConnection), resolves the pending promise.
@@ -510,6 +516,21 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
           break;
         }
 
+        // --- Cascade attribution hint ---
+        // Sent by the PostToolUse(Bash) hook. Stores the single most-recent
+        // attribution hint; the cascade-watcher reads it to attribute
+        // observed-git events. Attribution-only — no git detection here.
+
+        case "cascade-attribution": {
+          _cascadeAttribution = {
+            agentId: command.agentId || "",
+            taskRef: command.taskRef || null,
+            ts: typeof command.ts === "number" ? command.ts : Date.now(),
+          };
+          respond(client, { ok: true });
+          break;
+        }
+
         default:
           respond(client, { ok: false, error: `Unknown action: ${action}` });
       }
@@ -518,6 +539,11 @@ export function createCommandHandler(connection, scope, registeredAgents, opts =
       respond(client, { ok: false, error: err.message });
     }
   };
+
+  // Expose the latest cascade attribution hint so the sidecar can pass a
+  // getter to startCascadeWatcher as `getAttribution`. Returns the single
+  // most-recent { agentId, taskRef, ts } hint, or null when none received.
+  handler.getCascadeAttribution = () => _cascadeAttribution;
 
   // Allow updating the connection reference (also resolves any pending waitForConn)
   handler.setConnection = (newConn) => {

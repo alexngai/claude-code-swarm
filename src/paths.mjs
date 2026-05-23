@@ -102,6 +102,10 @@ export const LOGS_DIR = path.join(GLOBAL_CONFIG_DIR, "tmp", "logs");
 export const OPENTASKS_DIR = path.join(_tmpDir, "opentasks");
 export const OPENTASKS_SYNC_STATE_PATH = path.join(_tmpDir, "opentasks", "sync-state.json");
 
+// cascade runtime state — git-cascade tracker DB (local-mode state store)
+export const CASCADE_DIR = path.join(_tmpDir, "cascade");
+export const CASCADE_DB_PATH = path.join(_tmpDir, "cascade", "tracker.db");
+
 /**
  * Whether paths resolved to global (~/.claude-swarm/tmp/) vs project-level.
  */
@@ -147,6 +151,14 @@ export function ensureMapDir() {
  */
 export function ensureOpentasksDir() {
   fs.mkdirSync(OPENTASKS_DIR, { recursive: true });
+}
+
+/**
+ * Ensure the cascade runtime directory exists.
+ * Holds the git-cascade tracker DB (local-mode state store).
+ */
+export function ensureCascadeDir() {
+  fs.mkdirSync(CASCADE_DIR, { recursive: true });
 }
 
 /**

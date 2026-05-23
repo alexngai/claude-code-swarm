@@ -226,6 +226,98 @@ Skill-tree options:
 - `basePath` — Path to skill-tree storage directory (default: `.swarm/skill-tree/`)
 - `defaultProfile` — Default profile when no role-specific criteria exist (default: `""`)
 
+### Cascade integration (Phases 1–2)
+```json
+{
+  "template": "gsd",
+  "map": { "server": "ws://localhost:8080" },
+  "cascade": {
+    "enabled": true
+  }
+}
+```
+
+When enabled, the MAP sidecar opens a persistent `git-cascade` tracker
+(`MultiAgentRepoTracker`) in **local mode** as a local state store under
+`.swarm/claude-swarm/tmp/cascade/tracker.db`. On boot it registers the
+repository's current working branch as a local-mode git-cascade stream and
+emits a single `x-cascade/stream.opened` notification over the MAP connection
+so an OpenHive hub's cascade subsystem can observe the swarm.
+
+**Phase 2 — observed git.** The sidecar also runs a poll-based ref watcher
+(`src/cascade-watcher.mjs`). Every ~3s it diffs `git for-each-ref` snapshots
+and, when it detects git activity, emits `x-cascade/*` events with real git
+data: `stream.committed` (per new commit, with message summary / files touched
+/ parent / git-cascade change id), `stream.merged` (for merge commits, with
+best-effort source-stream resolution via the 2nd parent), `stream.pushed`
+(when a remote-tracking ref catches up to a local branch), and `stream.opened`
+(for newly-appeared branches + a connection re-assert on MAP reconnect). The
+watcher is the **detector**; it works fully standalone, emitting unattributed
+events when no attribution is present.
+
+After the ref-diff pass each tick the watcher also probes in-progress
+**merge-conflict** state: a cheap `existsSync` on the worktree-local
+`.git/MERGE_HEAD`. On the off→on transition it records a conflict row
+(`recordObservedConflict` → git-cascade `conflicts.createConflict`) and emits
+`x-cascade/stream.conflicted` with the conflicted files (`git diff
+--name-only --diff-filter=U`), the conflicting commit (`MERGE_HEAD`), the
+target commit (`HEAD`), and `source: "merge"`. On the on→off transition it
+discriminates by HEAD: if HEAD advanced to a commit with ≥2 parents the merge
+was resolved + committed (`resolution_method: "manual"`, or `"agent"` when a
+fresh attribution hint is present) — otherwise the merge was aborted (HEAD
+unchanged → `"abandoned"`, via `conflicts.abandonConflict`). Conflict events
+fire only on transitions, never on every tick while a conflict is open. The
+sidecar advertises `cascade.emitsConflicts: true` honestly off the back of
+this. Rebase-conflict observation (`.git/rebase-merge/`,
+`.git/rebase-apply/`) is a known future expansion — v1 covers `git merge`
+conflicts only.
+
+A `PostToolUse(Bash)` hook supplies **attribution only** — it does not detect
+git. It builds an `{ agentId, taskRef, ts }` hint and pushes it to the sidecar
+via the `cascade-attribution` socket command. The watcher stamps `agent_id` /
+`metadata.task_ref` on emitted events when a fresh hint (within ~30s) exists.
+`taskRef` is correlated against the in-progress opentasks task only when
+`opentasks.enabled`; without opentasks, attribution carries `agent_id` only.
+
+When the watcher detects a branch forked from a tracked branch it links the
+fork: the `x-cascade/stream.opened` event carries `parent_stream` (the parent
+branch's stream id) and the git-cascade tracker DB records the parent edge, so
+an OpenHive hub's PR-stack walker can traverse parent → child.
+
+**Phase 3 — diff serving.** The sidecar wires a diff server
+(`src/cascade-diff-server.mjs`) that registers an inbound `cascade/diff.request`
+handler on the MAP connection, so an OpenHive hub's cascade changelog/diff
+endpoints work for cc-swarm-tracked streams. On a request the server resolves
+the diff with plain git in the repo cwd — cc-swarm runs git-cascade in local
+mode with no worktrees, so the request's `head` / `base` (commit hashes,
+self-identifying) drive `git show <head>` (single commit) or
+`git diff <base>..<head>` (range), with `--name-only` when `files_only` is set
+and a `file_paths` path restriction when present. `files_touched` is always
+computed via `--name-only`. A 50 MB stdout cap and 30 s timeout bound the git
+spawn. The server replies inline (`cascade/diff.response`, `streaming: false`)
+when the raw diff is ≤ 512 KB; larger diffs send a streaming announcement
+(`streaming: true`) followed by 1 MB base64 `cascade/diff.chunk` notifications,
+seq-ordered, with `final: true` + a sha256 over the full payload on the last
+chunk. Any error (bad request, git failure) folds into the typed
+`cascade/diff.response` error variant — the server never throws.
+
+The sidecar declares the `cascade: { canServeDiff: true }` MAP capability at
+registration, **conditional on `cascade.enabled`** — the same gate the diff
+server is wired on. Declaring `canServeDiff` without the server would invite
+`cascade/diff.request` notifications from the hub that time out.
+
+cc-swarm emits `x-cascade/*` events itself over MAP — the tracker is not given
+git-cascade's `emit` callback. Cascade is only meaningful when `map` is enabled
+(there is otherwise no connection to emit on); when `map` is disabled it is an
+inert no-op rather than a hard failure. All cascade work is fully gated on
+`cascade.enabled` and wrapped so a cascade failure can never crash the sidecar.
+
+Cascade options:
+- `enabled` — Enable git-cascade integration (default: `false`)
+
+Requires `git-cascade` (`>= ^0.0.7`), installed on demand via swarmkit during
+bootstrap when `cascade.enabled`.
+
 ### Logging
 ```json
 {
@@ -303,6 +395,7 @@ All config values can be overridden via `SWARM_*` environment variables. Priorit
 | `skilltree.enabled` | `SWARM_SKILLTREE_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `skilltree.basePath` | `SWARM_SKILLTREE_BASE_PATH` | string | `""` |
 | `skilltree.defaultProfile` | `SWARM_SKILLTREE_DEFAULT_PROFILE` | string | `""` |
+| `cascade.enabled` | `SWARM_CASCADE_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `mesh.enabled` | `SWARM_MESH_ENABLED` | boolean (`true`/`1`/`yes`) | `false` |
 | `mesh.peerId` | `SWARM_MESH_PEER_ID` | string | `""` |
 | `mesh.mapServer` | `SWARM_MESH_MAP_SERVER` | string | `""` |
@@ -404,6 +497,7 @@ Both modes:
 - `trajectory: { canReport: true, canServeContent: true }` — reports checkpoints, serves transcript content on demand
 - `tasks: { canCreate, canAssign, canUpdate, canList }` — task management
 - `opentasks: { canQuery, canLink, canAnnotate, canTask }` — conditional, when task_graph configured
+- `cascade: { canServeDiff: true }` — conditional, when `cascade.enabled` — sidecar serves unified diffs on demand via `cascade/diff.request` (see Cascade integration above)
 
 Message delivery is **pull-based**: the `UserPromptSubmit` hook reads the inbox on each turn and injects messages into Claude Code's prompt context. No real-time push delivery.
 
@@ -465,6 +559,7 @@ Global (managed by swarmkit, installed on demand during bootstrap):
 - **sessionlog** — git-integrated session capture (installed when `sessionlog.enabled: true`)
 - **minimem** — file-based memory with vector search (installed when `minimem.enabled: true`)
 - **skill-tree** — versioned skill library with serving layer (installed when `skilltree.enabled: true`)
+- **git-cascade** — multi-agent git tracking; local-mode tracker for cascade observability (installed when `cascade.enabled: true`)
 
 Runtime:
 - **Claude Code agent teams** — enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings.json
