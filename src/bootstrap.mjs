@@ -71,7 +71,7 @@ function getRequiredGlobalPackages(config) {
     packages.push("agentic-mesh");
   }
   if (config.cascade?.enabled) {
-    packages.push("git-cascade"); // requires >= ^0.0.7 (local-mode streams + x-cascade events)
+    packages.push("git-cascade"); // declared as a peer in package.json (>=0.0.9 — CascadeCapability + diff-rpc/action-rpc subpaths)
   }
   return packages;
 }

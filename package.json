@@ -30,11 +30,15 @@
   },
   "peerDependencies": {
     "agent-inbox": "*",
+    "git-cascade": ">=0.0.9",
     "opentasks": ">=0.1.1",
     "swarmkit": "*"
   },
   "peerDependenciesMeta": {
     "agent-inbox": {
+      "optional": true
+    },
+    "git-cascade": {
       "optional": true
     },
     "opentasks": {
@@ -61,6 +65,7 @@
   },
   "devDependencies": {
     "agent-inbox": "^0.2.3",
+    "git-cascade": "^0.0.9",
     "minimem": "^0.1.1",
     "opentasks": "^0.1.2",
     "publint": "^0.3.21",
